@@ -44,12 +44,18 @@ from 8 to 22.
 | Prefer photos from this time of year | nothing; `"order": "seasonal"` is the default (±21 days, any year) |
 | Loosen / tighten "this time of year" | `"season_days": 45` / `"season_days": 10` |
 | Ignore dates, pick at random | `"order": "random"` |
+| Change the "Photo taken 2020-09-13" line | `"date_format": "Taken %B %Y"` → `Taken September 2020`; `null` to leave it off |
 
 Posts go out at `window_start`, then every `interval_hours` until `window_end`.
 `poster.py --check` prints each stream's resulting times.
 
-**Post text:** `<caption, if any>` + blank line + `<place tags> <location_tags.json extras> <feed hashtags>`,
-e.g. `#Longmont #Colorado #Postcards #Photography`.
+**Post text:** `<caption, if any>` + blank line + `<place tags> <location_tags.json extras> <feed hashtags>`
++ new line + `Photo taken <date>`, e.g.
+
+```
+#Longmont #Colorado #Postcards #Photography
+Photo taken 2020-09-13
+```
 
 - **Place tags** come from each photo's Place field, which you edit in the curate app.
 - **Extra tags for a place:** add them to `location_tags.json`, e.g. `{"Longmont": ["#Longmont"]}`.

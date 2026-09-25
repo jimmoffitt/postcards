@@ -122,6 +122,7 @@ block overrides them, then the feed's own entry overrides both:
 | `window_enabled` | `true` | If `false`, slots start at midnight and run all day |
 | `order` | `seasonal` | `seasonal` or `random`; see below |
 | `season_days` | `21` | For `seasonal`: how close, in days, a photo's calendar date must be to today's |
+| `date_format` | `"Photo taken %Y-%m-%d"` | Last line of each post ([strftime](https://strftime.org) codes, e.g. `"Taken %B %Y"`); `null` to leave it off |
 
 **Schedule.** Posts go out at fixed local times: `window_start`, then every `interval_hours` until
 `window_end`. With the defaults that's **08:00, 14:00 and 20:00**, and the times stay on local time
@@ -142,10 +143,12 @@ many queued photos are in season right now.
 <caption typed in curate, if any; may include your own #hashtags>
 
 <one tag per part of the place> <matches from location_tags.json> <feed hashtags>
+Photo taken <date>
 ```
 
-For example, a photo whose place is "Longmont, CO" gets
-`#Longmont #Colorado #Postcards #Photography`. Tags you typed into the caption
+For example, a photo taken on 13 September 2020 whose place is "Longmont, CO" gets
+`#Longmont #Colorado #Postcards #Photography`, then `Photo taken 2020-09-13` on the next line. A photo
+with no date gets no date line. Tags you typed into the caption
 aren't repeated. If a post would go over Bluesky's 300-character limit, location tags are dropped
 first (from the end), then feed tags.
 

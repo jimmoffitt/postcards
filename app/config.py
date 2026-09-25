@@ -46,6 +46,7 @@ DEFAULTS = {
     "timezone": "UTC",
     "order": "seasonal",
     "season_days": 21,
+    "date_format": "Photo taken %Y-%m-%d",  # last line of each post; null to leave it off
 }
 ORDERS = ("seasonal", "random")
 HASHTAG_RE = re.compile(r"#\w+")
@@ -100,6 +101,10 @@ def _validate(account: str, cfg: dict) -> None:
     start, end = cfg["window_start"], cfg["window_end"]
     if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= 24):
         raise ValueError(f"{account}: window_start/window_end must be whole hours with 0 <= start < end <= 24")
+    fmt = cfg["date_format"]
+    if fmt is not None and not (isinstance(fmt, str) and "%" in fmt and "#" not in fmt):
+        raise ValueError(f"{account}: date_format must be null or a strftime pattern like "
+                         f"\"Photo taken %Y-%m-%d\" (no #), got {fmt!r}")
     if cfg["order"] not in ORDERS:
         raise ValueError(f"{account}: order must be one of {list(ORDERS)}, got {cfg['order']!r}")
     days = cfg["season_days"]
