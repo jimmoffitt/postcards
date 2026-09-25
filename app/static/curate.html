@@ -6,9 +6,13 @@
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #16181c; color: #e6e6e6; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #16181c; color: #e6e6e6;
+         height: 100vh; display: flex; flex-direction: column; }
+  .stream-info { padding: 8px 14px; font-size: 13px; background: #1c2230; border-bottom: 1px solid #2a2d34; color: #cdd6e4; }
+  .stream-info.paused { background: #2e2616; color: #e8d6a8; }
+  .stream-info b { color: #fff; font-weight: 600; }
 
-  .layout { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+  .layout { display: grid; grid-template-columns: 300px 1fr; flex: 1; min-height: 0; }
 
   .sidebar { border-right: 1px solid #2a2d34; display: flex; flex-direction: column; overflow: hidden; }
   .filters { padding: 12px; border-bottom: 1px solid #2a2d34; display: flex; flex-direction: column; gap: 8px; }
@@ -55,6 +59,7 @@
 </style>
 </head>
 <body>
+<div class="stream-info" id="streamInfo">&nbsp;</div>
 <div class="layout">
   <div class="sidebar">
     <div class="filters">
@@ -144,6 +149,19 @@ function filterParams() {
 
 let loadRequestId = 0;
 
+async function loadStreamInfo() {
+  const el = $('streamInfo');
+  try {
+    const info = await fetch(`/api/stream/${currentAccount}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+    el.textContent = info.summary;
+    el.title = `Posts at ${info.slots.join(', ')} ${info.timezone} (${info.posts_per_day}/day). ` +
+               `${info.curated} curated, ${info.holding_pen} in the holding pen.`;
+    el.classList.toggle('paused', !info.enabled);
+  } catch (err) {
+    el.textContent = `Couldn't read the stream settings (feeds.json): ${err.message}`;
+  }
+}
+
 async function loadPhotos() {
   const accountChanged = currentAccount !== $('account').value;
   currentAccount = $('account').value;
@@ -169,6 +187,7 @@ async function loadPhotos() {
   }
 
   photos = await resp.json();
+  loadStreamInfo();
   selectedIndex = photos.length ? 0 : -1;
   renderList();
   renderEditor();
@@ -293,6 +312,7 @@ async function moveToAccount(toAccount) {
   }
   photos.splice(selectedIndex, 1);
   if (selectedIndex >= photos.length) selectedIndex = photos.length - 1;
+  loadStreamInfo();
   renderList();
   renderEditor();
 }
@@ -305,6 +325,7 @@ async function deletePhoto() {
   await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}`, {method: 'DELETE'});
   photos.splice(selectedIndex, 1);
   if (selectedIndex >= photos.length) selectedIndex = photos.length - 1;
+  loadStreamInfo();
   renderList();
   renderEditor();
 }
@@ -323,6 +344,7 @@ async function toggleCurated(checked) {
     photos.splice(selectedIndex, 1);
     if (selectedIndex >= photos.length) selectedIndex = photos.length - 1;
   }
+  loadStreamInfo();
   renderList();
   renderEditor();
 }

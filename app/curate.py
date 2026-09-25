@@ -46,6 +46,46 @@ def api_accounts():
     return jsonify(sorted(md.ACCOUNTS))
 
 
+def _describe_interval(hours: float) -> str:
+    minutes = round(hours * 60)
+    if minutes % 60:
+        return f"{minutes} minutes" if minutes < 60 else f"{minutes / 60:g} hours"
+    return "hour" if minutes == 60 else f"{minutes // 60} hours"
+
+
+@app.get("/api/stream/<account>")
+def api_stream(account):
+    """The feed's posting schedule (from feeds.json, read fresh) and how many
+    days of photos are left at that rate, for the banner."""
+    if account not in md.ACCOUNTS:
+        abort(404)
+    cfg = config.load_feeds()[account]
+    slots = config.slot_times(cfg)
+    per_day = len(slots)
+    curated, holding = len(md.scan_curated(account)), len(md.scan_holding(account))
+    every = _describe_interval(cfg["interval_hours"])
+    if cfg["window_enabled"]:
+        when = f"every {every} between {cfg['window_start']:02d}:00 and {cfg['window_end']:02d}:00"
+    else:
+        when = f"every {every}, around the clock"
+    remaining = (f"{curated / per_day:.1f} days remain in the \u2018Curated\u2019 folder and "
+                 f"{holding / per_day:.1f} days in the \u2018Holding pen\u2019 folder")
+    if cfg["enabled"]:
+        summary = f"{account} posts {when}. At this rate, {remaining}."
+    else:
+        summary = (f"{account} is paused (\"enabled\": false in feeds.json). "
+                   f"When enabled, it posts {when}; at that rate, {remaining}.")
+    return jsonify({
+        "summary": summary,
+        "enabled": cfg["enabled"],
+        "posts_per_day": per_day,
+        "slots": [t.strftime("%H:%M") for t in slots],
+        "timezone": cfg["timezone"],
+        "curated": curated, "holding_pen": holding,
+        "curated_days": round(curated / per_day, 1), "holding_pen_days": round(holding / per_day, 1),
+    })
+
+
 @app.get("/api/places/<account>")
 def api_places(account):
     """Distinct place values already used in this account, for the Place
