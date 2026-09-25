@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """One-time/rerunnable seeding of metadata_<Account>.json from photos on disk.
 
-Idempotent: never overwrites an existing entry (so curator edits made via
-curate.py are safe) -- only adds entries for photos that don't have one yet,
+Idempotent: never overwrites an existing entry's fields (so curator edits
+made via curate.py are safe), except to fill in a missing date_taken. Adds
+entries for photos that don't have one yet,
 seeding alt_text from a legacy alt_text_<Account>.json if given (from the
 single-folder pipeline's migration) and always computing GPS/date fresh
 from the file itself.
@@ -34,9 +35,16 @@ def main():
     existing = md.load_metadata(account)
     filenames = sorted(set(md.scan_holding(account)) | set(md.scan_curated(account)) | set(md.scan_posted(account)))
 
-    added = 0
+    added = dated = 0
     for filename in filenames:
         if filename in existing:
+            entry = existing[filename]
+            if not entry.get("date_taken"):
+                path, _status = md.find_photo(account, filename)
+                entry["date_taken"] = md.extract_date_taken(path)
+                if entry["date_taken"]:
+                    dated += 1
+                    print(f"{filename}: date_taken -> {entry['date_taken']}")
             continue
 
         path, _status = md.find_photo(account, filename)
@@ -67,7 +75,8 @@ def main():
         added += 1
 
     md.save_metadata(account, existing)
-    print(f"\n{account}: {added} new entries added, {len(existing)} total in metadata_{account}.json")
+    print(f"\n{account}: {added} new entries added, {dated} missing dates filled, "
+          f"{len(existing)} total in metadata_{account}.json")
 
 
 if __name__ == "__main__":

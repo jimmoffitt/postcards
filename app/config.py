@@ -8,6 +8,11 @@ feeds.json is the one place a photo stream is defined:
 Each feed's settings = built-in DEFAULTS, then the file's "defaults", then
 the feed's own entry.
 
+Which photo: with "order": "seasonal" (the default), photos taken within
+season_days of today's calendar date -- any year -- come first, chosen at
+random among themselves; with none that close, the window widens in
+season_days steps. "random" ignores dates.
+
 Posts go out at fixed local times: window_start, then every interval_hours
 while before window_end -- with the built-in defaults (8-22, 6h) that's
 08:00, 14:00 and 20:00. With the window off, slots start at midnight.
@@ -39,7 +44,10 @@ DEFAULTS = {
     "window_start": 8,
     "window_end": 22,
     "timezone": "UTC",
+    "order": "seasonal",
+    "season_days": 21,
 }
+ORDERS = ("seasonal", "random")
 HASHTAG_RE = re.compile(r"#\w+")
 
 
@@ -92,6 +100,11 @@ def _validate(account: str, cfg: dict) -> None:
     start, end = cfg["window_start"], cfg["window_end"]
     if not (isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= 24):
         raise ValueError(f"{account}: window_start/window_end must be whole hours with 0 <= start < end <= 24")
+    if cfg["order"] not in ORDERS:
+        raise ValueError(f"{account}: order must be one of {list(ORDERS)}, got {cfg['order']!r}")
+    days = cfg["season_days"]
+    if not (isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= 182):
+        raise ValueError(f"{account}: season_days must be a whole number of days from 1 to 182, got {days!r}")
     try:
         ZoneInfo(cfg["timezone"])
     except (ZoneInfoNotFoundError, ValueError, TypeError):

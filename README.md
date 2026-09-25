@@ -120,10 +120,21 @@ block overrides them, then the feed's own entry overrides both:
 | `interval_hours` | `6` | Whole minutes, from 5 minutes to 24 hours |
 | `window_start` / `window_end` | `8` / `22` | Whole hours, local time |
 | `window_enabled` | `true` | If `false`, slots start at midnight and run all day |
+| `order` | `seasonal` | `seasonal` or `random`; see below |
+| `season_days` | `21` | For `seasonal`: how close, in days, a photo's calendar date must be to today's |
 
 **Schedule.** Posts go out at fixed local times: `window_start`, then every `interval_hours` until
 `window_end`. With the defaults that's **08:00, 14:00 and 20:00**, and the times stay on local time
 through daylight-saving changes.
+
+**Which photo.** With `"order": "seasonal"`, each slot picks at random from the curated photos
+taken within `season_days` of today's calendar date, in any year. So in late September you get
+September and October photos, whatever year they're from. When none are that close, the window
+widens in `season_days` steps. Photos with no date go last. With `"order": "random"`, dates are
+ignored. The date comes from the photo's EXIF capture time (`date_taken` in the metadata).
+
+To keep posts in season, curate photos from around the current time of year: `--check` shows how
+many queued photos are in season right now.
 
 **Post text.** Each post is built when it's sent:
 

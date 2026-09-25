@@ -3,7 +3,8 @@
 
 One process, one thread per enabled feed in feeds.json, each posting at
 fixed local times (config.slot_times -- by default 08:00, 14:00, 20:00).
-At each slot, its worker picks a random curated photo, posts it (alt text from
+At each slot, its worker picks a curated photo -- by default one taken around
+this time of year (see order_candidates) -- posts it (alt text from
 metadata_<Account>.json, post text from compose_message: caption + feed
 hashtags + place hashtags), and moves the file into posted/.
 
@@ -212,6 +213,41 @@ def queue(account: str) -> tuple[dict, list[str]]:
     return entries, candidates
 
 
+def _day_of_year(month: int, day: int) -> int:
+    # A non-leap year, so Feb 29 counts as Feb 28.
+    return datetime.date(2001, month, min(day, 28) if month == 2 else day).timetuple().tm_yday
+
+
+def season_distance(date_taken: str | None, today: datetime.date) -> int | None:
+    """Days between the photo's calendar date (any year) and today's, going
+    around the year the short way: Dec 30 and Jan 2 are 3 days apart."""
+    try:
+        _, month, day = (int(x) for x in date_taken.split("-"))
+        taken = _day_of_year(month, day)
+    except (AttributeError, ValueError):
+        return None
+    diff = abs(taken - _day_of_year(today.month, today.day))
+    return min(diff, 365 - diff)
+
+
+def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict,
+                     today: datetime.date) -> list[str]:
+    """Candidates in the order to try them. "random": shuffled. "seasonal":
+    photos taken within season_days of today's date (any year) first, then
+    within 2x season_days, and so on; random within each band. Undated
+    photos come last."""
+    shuffled = random.sample(candidates, len(candidates))
+    if feed_cfg["order"] == "random":
+        return shuffled
+    window = feed_cfg["season_days"]
+
+    def band(filename):
+        d = season_distance(entries[filename].get("date_taken"), today)
+        return 10_000 if d is None else max(0, -(-d // window) - 1)  # ceil(d / window) - 1
+
+    return sorted(shuffled, key=band)  # stable, so each band stays shuffled
+
+
 def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool) -> bool:
     """Posts one photo. Returns True if something was posted."""
     entries, candidates = queue(account)
@@ -219,9 +255,10 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
         logger.info("[%s] no curated photos ready to post -- nothing to do", account)
         return False
 
-    # Random pick; a photo that can't be made safe to upload (see
-    # upload_prep) is skipped in favour of the next, not posted as-is.
-    for filename in random.sample(candidates, len(candidates)):
+    # Seasonal (or random) order; a photo that can't be made safe to upload
+    # (see upload_prep) is skipped in favour of the next, not posted as-is.
+    today = datetime.datetime.now(feed_cfg["tz"]).date()
+    for filename in order_candidates(candidates, entries, feed_cfg, today):
         try:
             image = upload_prep.prepare(md.curated_dir(account) / filename)
             break
@@ -234,8 +271,11 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
 
     meta = entries[filename]
     message = md.compose_message(meta, feed_cfg, md.load_location_tags())
-    logger.info("[%s] selected %s (%d curated remaining; %d bytes, metadata stripped, %s)",
-                account, filename, len(candidates), len(image.data), image.method)
+    distance = season_distance(meta.get("date_taken"), today)
+    logger.info("[%s] selected %s, taken %s%s (%d curated remaining; %d bytes, metadata stripped, %s)",
+                account, filename, meta.get("date_taken") or "on an unknown date",
+                "" if distance is None else f", {distance} days from today's date",
+                len(candidates), len(image.data), image.method)
 
     if not meta.get("alt_text"):
         logger.warning("[%s] %s has no alt_text -- posting anyway", account, filename)
@@ -356,6 +396,15 @@ def check(accounts: list[str], feeds: dict) -> bool:
         no_alt = [f for f in candidates if not entries[f].get("alt_text")]
         per_day = len(config.slot_times(cfg))
         print(f"   schedule: {describe_schedule(cfg)}")
+        if cfg["order"] == "seasonal":
+            today = datetime.datetime.now(cfg["tz"]).date()
+            dists = [season_distance(entries[f].get("date_taken"), today) for f in candidates]
+            in_season = sum(1 for d in dists if d is not None and d <= cfg["season_days"])
+            undated = sum(1 for d in dists if d is None)
+            print(f"   order: seasonal -- {in_season} photos taken within ±{cfg['season_days']} days of "
+                  f"{today:%b %d} (any year)" + (f", {undated} undated (posted last)" if undated else ""))
+        else:
+            print("   order: random")
         print(f"   queue: {len(candidates)} curated ready (~{len(candidates) / per_day:.0f} days at "
               f"{per_day}/day), {len(md.scan_posted(account))} posted")
         if unpostable:

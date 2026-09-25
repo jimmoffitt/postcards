@@ -219,20 +219,25 @@ def extract_gps(path: Path) -> tuple[float, float] | None:
     return round(lat, GEOCODE_PRECISION), round(lon, GEOCODE_PRECISION)
 
 
+EXIF_DATETIME_ORIGINAL = 36867   # when the shutter fired (Exif sub-IFD)
+EXIF_DATETIME_DIGITIZED = 36868
+EXIF_DATETIME = 306              # when the file was last changed; usually, not always, the same
+
+
 def extract_date_taken(path: Path) -> str | None:
+    """Capture date as "YYYY-MM-DD", preferring the capture timestamp over
+    the file-modified one (which an editing app can change, or omit)."""
     try:
-        img = Image.open(path)
-        exif = img.getexif()
-        raw = exif.get(306)  # DateTime
+        with Image.open(path) as img:
+            exif = img.getexif()
+            sub = exif.get_ifd(ExifTags.IFD.Exif)
+            raw = sub.get(EXIF_DATETIME_ORIGINAL) or sub.get(EXIF_DATETIME_DIGITIZED) or exif.get(EXIF_DATETIME)
     except Exception:
         return None
-    if not raw:
+    if not raw or not isinstance(raw, str):
         return None
-    try:
-        date_part = raw.split(" ")[0]  # "2024:12:24"
-        return date_part.replace(":", "-")  # "2024-12-24"
-    except Exception:
-        return None
+    date_part = raw.strip().split(" ")[0].replace(":", "-")  # "2024:12:24 10:01:02" -> "2024-12-24"
+    return date_part if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_part) and date_part != "0000-00-00" else None
 
 
 # ---------------------------------------------------------------------------
