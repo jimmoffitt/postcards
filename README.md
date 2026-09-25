@@ -41,7 +41,7 @@ the Pi, finding its IP, and managing services.
 prepare_photos.py            one-off prep: HEIC → JPG, shrink to Bluesky's ~976 KB limit
 generate_alt_text.py         batch alt-text generation (used by the script below)
 requirements.txt             deps for the prep scripts (laptop only)
-location_tags.json           extra hashtags by place, e.g. {"Longmont": ["#Longmont"]}
+location_tags.json           custom hashtags for parts of a place, e.g. {"McIntosh": ["#McIntosh"]}
 metadata_<Feed>.json         per-photo alt text, caption, place, GPS, date; not in git
 geocode_cache.json           cached OpenStreetMap reverse-geocoding results; not in git
 photos/<Feed>/               the photos themselves; not in git
@@ -142,9 +142,19 @@ many queued photos are in season right now.
 ```
 <caption typed in curate, if any; may include your own #hashtags>
 
-<one tag per part of the place> <matches from location_tags.json> <feed hashtags>
+<one tag per part of the place, most specific first> <feed hashtags>
 Photo taken <date>
 ```
+
+**Location tags** come from the photo's Place field, one tag per comma-separated part, in the
+place's own order: most specific first, out to the state or country. "Longmont, CO" gives
+`#Longmont #Colorado`: state abbreviations are expanded, and a leading "Near" is dropped.
+
+To use a different tag for part of a place, add it to `location_tags.json`. The key is text to
+match (case-insensitive) in one part of the place, and the value replaces that part's tag in the
+same position. For example, `{"McIntosh": ["#McIntosh"]}` turns "McIntosh Reservoir, Longmont, CO"
+into `#McIntosh #Longmont #Colorado` rather than `#McIntoshReservoir #Longmont #Colorado`. A list of
+several tags inserts them all there, and an empty list `[]` drops that part's tag.
 
 For example, a photo taken on 13 September 2020 whose place is "Longmont, CO" gets
 `#Longmont #Colorado #Postcards #Photography`, then `Photo taken 2020-09-13` on the next line. A photo

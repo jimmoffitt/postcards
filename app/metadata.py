@@ -303,20 +303,29 @@ US_STATE_ABBREVIATIONS = {
 }
 
 
-def place_component_tags(place: str) -> list[str]:
-    """One hashtag per comma-separated component of place, e.g.
+def place_component_tags(place: str, location_tags: dict = None) -> list[str]:
+    """One hashtag per comma-separated component of place, in the place's
+    own order -- most specific first, out to the state/country:
     "Boulder County, Colorado" -> ["#BoulderCounty", "#Colorado"].
     A bare 2-letter US state abbreviation is normalized to its full name
-    first, so "Longmont, CO" and "Longmont, Colorado" both tag #Colorado."""
+    first, so "Longmont, CO" and "Longmont, Colorado" both tag #Colorado.
+
+    A component matching a location_tags.json key (case-insensitive
+    substring) gets that entry's tags instead, in the same position:
+    with {"McIntosh": ["#McIntosh"]}, "McIntosh Reservoir, Longmont, CO"
+    -> ["#McIntosh", "#Longmont", "#Colorado"]. An empty list drops it."""
     tags = []
     for part in place.split(","):
         part = re.sub(r"^near\s+", "", part.strip(), flags=re.IGNORECASE)  # "Near San Luis Obispo"
         if not part:
             continue
         part = US_STATE_ABBREVIATIONS.get(part.upper(), part)
-        tag = to_hashtag(part)
-        if tag and tag not in tags:
-            tags.append(tag)
+        overrides = [t for key, key_tags in (location_tags or {}).items()
+                     if key.lower() in part.lower() for t in key_tags]
+        matched = any(key.lower() in part.lower() for key in (location_tags or {}))
+        for tag in overrides if matched else [to_hashtag(part)]:
+            if tag and tag not in tags:
+                tags.append(tag)
     return tags
 
 
@@ -347,10 +356,14 @@ LOCATION_TAGS_PATH = PROJECT_ROOT / "location_tags.json"
 
 
 def load_location_tags() -> dict:
-    """{"substring to match in place (case-insensitive)": ["#Tag", ...]}
-    Hand-editable -- add a new key any time you want more places to pick up
-    extra hashtags on the next sync."""
-    return json.loads(LOCATION_TAGS_PATH.read_text()) if LOCATION_TAGS_PATH.exists() else {}
+    """{"text to match in one part of a place (case-insensitive)": ["#Tag", ...]}
+    Replaces the auto-generated tag for the matching part of the place --
+    see place_component_tags. Hand-editable; applies to the next post."""
+    data = json.loads(LOCATION_TAGS_PATH.read_text()) if LOCATION_TAGS_PATH.exists() else {}
+    for key, tags in data.items():
+        if not (isinstance(tags, list) and all(isinstance(t, str) and config.HASHTAG_RE.fullmatch(t) for t in tags)):
+            raise ValueError(f"location_tags.json: {key!r} must map to a list like [\"#Tag\"], got {tags!r}")
+    return data
 
 
 def already_mentions_place(text: str, place: str) -> bool:
@@ -360,17 +373,6 @@ def already_mentions_place(text: str, place: str) -> bool:
     AI-generated description already names it regardless of locality."""
     locality = place.split(",")[0].strip().lower()
     return bool(locality) and locality in (text or "").lower()
-
-
-def tags_for_place(place: str, location_tags: dict) -> list[str]:
-    place_lower = place.lower()
-    tags = []
-    for substring, extra_tags in location_tags.items():
-        if substring.lower() in place_lower:
-            for tag in extra_tags:
-                if tag not in tags:
-                    tags.append(tag)
-    return tags
 
 
 def sync_locations(account: str) -> dict:
@@ -402,8 +404,9 @@ MAX_POST_CHARS = 300  # Bluesky counts graphemes; len() is never smaller, so thi
 
 
 def post_hashtags(entry: dict, feed_cfg: dict, location_tags: dict) -> tuple[list[str], list[str]]:
-    """(location tags, feed tags). Location = one per place component, then
-    location_tags.json extras; feed = feeds.json hashtags. Tags already typed
+    """(location tags, feed tags). Location = one per place component, most
+    specific first, with location_tags.json substitutions; feed = feeds.json
+    hashtags. Tags already typed
     into the caption, or repeated, are dropped (case-insensitive)."""
     seen = {t.lower() for t in config.HASHTAG_RE.findall(entry.get("message") or "")}
 
@@ -416,7 +419,7 @@ def post_hashtags(entry: dict, feed_cfg: dict, location_tags: dict) -> tuple[lis
         return out
 
     place = entry.get("place") or ""
-    location = fresh(place_component_tags(place) + tags_for_place(place, location_tags)) if place else []
+    location = fresh(place_component_tags(place, location_tags)) if place else []
     return location, fresh(feed_cfg["hashtags"])
 
 

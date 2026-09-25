@@ -49,7 +49,7 @@ from 8 to 22.
 Posts go out at `window_start`, then every `interval_hours` until `window_end`.
 `poster.py --check` prints each stream's resulting times.
 
-**Post text:** `<caption, if any>` + blank line + `<place tags> <location_tags.json extras> <feed hashtags>`
+**Post text:** `<caption, if any>` + blank line + `<place tags, most specific first> <feed hashtags>`
 + new line + `Photo taken <date>`, e.g.
 
 ```
@@ -58,8 +58,9 @@ Photo taken 2020-09-13
 ```
 
 - **Place tags** come from each photo's Place field, which you edit in the curate app.
-- **Extra tags for a place:** add them to `location_tags.json`, e.g. `{"Longmont": ["#Longmont"]}`.
-  A substring match on the place is enough.
+- **Custom tag for part of a place:** add it to `location_tags.json`. It replaces the matching
+  part's tag in the same position. `{"McIntosh": ["#McIntosh"]}` turns "McIntosh Reservoir, Longmont, CO"
+  into `#McIntosh #Longmont #Colorado`. Matching is case-insensitive substring; `[]` drops that part.
 - **One photo:** type a caption and/or hashtags into its caption box in the curate app.
 
 **Add a new stream:**
