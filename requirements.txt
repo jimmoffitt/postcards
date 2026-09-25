@@ -1,0 +1,7 @@
+# Deps for the one-off prep scripts (run locally on a dev machine, not the Pi):
+# prepare_photos.py, generate_alt_text.py.
+# For the ongoing app (curation tool + posting daemon), see app/requirements.txt.
+
+Pillow>=10.0.0
+pillow-heif>=0.15.0
+anthropic>=0.40.0

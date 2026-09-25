@@ -1,0 +1,14 @@
+{
+  "defaults": {
+    "timezone": "America/Denver",
+    "hashtags": ["#Postcards", "#Photography"]
+  },
+  "feeds": {
+    "PostcardsFromHome": {
+      "enabled": true
+    },
+    "SomePostcards": {
+      "enabled": false
+    }
+  }
+}

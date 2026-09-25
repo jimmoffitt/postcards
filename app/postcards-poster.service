@@ -1,0 +1,19 @@
+[Unit]
+Description=Postcards multi-account Bluesky posting daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jim
+WorkingDirectory=/home/jim/projects/postcards/app
+EnvironmentFile=/home/jim/projects/postcards/app/.local.env
+ExecStart=/home/jim/projects/postcards/app/.venv/bin/python3 poster.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=postcards-poster
+
+[Install]
+WantedBy=multi-user.target

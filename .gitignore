@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Environment / secrets
+.local.env
+*.env
+
+# Runtime
+logs/
+state/
+*.log
+
+# Photos (large binaries, synced to the Pi separately -- not versioned)
+photos/
+
+# macOS
+.DS_Store
+
+# Photo metadata and geocoding results hold GPS positions / street addresses:
+# kept out of git (sync_to_pi.sh copies metadata to the Pi directly).
+metadata_*.json
+geocode_cache.json
+.metadata-backups/

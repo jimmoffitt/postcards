@@ -1,0 +1,375 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Postcards curation</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #16181c; color: #e6e6e6; }
+
+  .layout { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+
+  .sidebar { border-right: 1px solid #2a2d34; display: flex; flex-direction: column; overflow: hidden; }
+  .filters { padding: 12px; border-bottom: 1px solid #2a2d34; display: flex; flex-direction: column; gap: 8px; }
+  .filters select, .filters input { background: #22252b; border: 1px solid #383c44; color: #e6e6e6; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+  .filters label { font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .04em; }
+  .date-row { display: flex; gap: 6px; }
+  .date-row input { flex: 1; min-width: 0; }
+  .count { font-size: 12px; color: #888; padding: 8px 12px; }
+
+  .list { overflow-y: auto; flex: 1; }
+  .list-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #22252b; }
+  .list-item:hover { background: #1e2127; }
+  .list-item.selected { background: #23334a; }
+  .list-item img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0; }
+  .list-item .info { min-width: 0; }
+  .list-item .fname { font-size: 12px; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list-item .tag { font-size: 10px; color: #7ab; }
+  .list-item.posted .fname { color: #666; }
+  .list-item.curated .tag { color: #7c7; }
+  .curated-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .curated-toggle input { width: 16px; height: 16px; }
+
+  .editor { display: flex; flex-direction: column; overflow: hidden; }
+  .editor-top { display: flex; gap: 20px; padding: 20px; overflow-y: auto; flex: 1; }
+  .editor-image { flex: 0 0 45%; }
+  .editor-image img { width: 100%; border-radius: 8px; background: #000; display: block; }
+  .editor-fields { flex: 1; display: flex; flex-direction: column; gap: 14px; min-width: 300px; }
+  .field label { display: block; font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+  .field textarea, .field input { width: 100%; background: #22252b; border: 1px solid #383c44; color: #e6e6e6; border-radius: 6px; padding: 8px 10px; font-size: 14px; font-family: inherit; }
+  .field textarea { resize: vertical; min-height: 60px; }
+  .row { display: flex; gap: 10px; }
+  .row .field { flex: 1; }
+  .meta-line { font-size: 12px; color: #888; }
+  .toolbar { display: flex; gap: 10px; align-items: center; padding: 14px 20px; border-top: 1px solid #2a2d34; }
+  button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  button.secondary { background: #383c44; }
+  button.danger { background: #7a2222; margin-left: auto; }
+  button.danger:hover { background: #952b2b; }
+  button:disabled { opacity: .5; cursor: default; }
+  .preview { white-space: pre-wrap; background: #1b1e23; border: 1px dashed #383c44; border-radius: 6px; padding: 8px 10px; font-size: 13px; color: #bbb; }
+  .preview .count { padding: 0; margin-top: 4px; font-size: 11px; }
+  .status { font-size: 12px; color: #7c7; margin-left: auto; }
+  .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar">
+    <div class="filters">
+      <div>
+        <label>Account</label>
+        <select id="account"></select>
+      </div>
+      <div>
+        <label>Status</label>
+        <select id="status">
+          <option value="holding-pen" selected>Holding pen</option>
+          <option value="curated">Curated</option>
+          <option value="posted">Posted</option>
+          <option value="all">All</option>
+        </select>
+      </div>
+      <div>
+        <label>Search (filename / alt text)</label>
+        <input id="q" type="text" placeholder="e.g. IMG_1234 or lake">
+      </div>
+      <div>
+        <label>Geo metadata</label>
+        <select id="hasGeo">
+          <option value="">Any</option>
+          <option value="true">Has location</option>
+          <option value="false">No location</option>
+        </select>
+      </div>
+      <div>
+        <label>Alt text</label>
+        <select id="hasAlt">
+          <option value="">Any</option>
+          <option value="true">Has alt text</option>
+          <option value="false">No alt text</option>
+        </select>
+      </div>
+      <div>
+        <label>Date taken</label>
+        <div class="date-row">
+          <input id="dateFrom" type="date">
+          <input id="dateTo" type="date">
+        </div>
+      </div>
+      <div>
+        <button class="secondary" id="btnSyncLocations" style="width:100%">Sync locations &rarr; alt text</button>
+        <div class="meta-line" id="syncResult" style="margin-top:6px"></div>
+      </div>
+    </div>
+    <div class="count" id="count"></div>
+    <div class="list" id="list"></div>
+  </div>
+
+  <div class="editor" id="editor">
+    <div class="empty">Select a photo</div>
+  </div>
+</div>
+
+<script>
+let photos = [];
+let selectedIndex = -1;
+let currentAccount = null;
+let placeOptions = [];
+let allAccounts = [];
+
+const $ = (id) => document.getElementById(id);
+
+async function loadAccounts() {
+  allAccounts = await fetch('/api/accounts').then(r => r.json());
+  $('account').innerHTML = allAccounts.map(a => `<option value="${a}">${a}</option>`).join('');
+  currentAccount = allAccounts[0];
+}
+
+async function loadPlaceOptions() {
+  placeOptions = await fetch(`/api/places/${currentAccount}`).then(r => r.json());
+}
+
+function filterParams() {
+  const p = new URLSearchParams();
+  p.set('status', $('status').value);
+  if ($('q').value) p.set('q', $('q').value);
+  if ($('hasGeo').value) p.set('has_geo', $('hasGeo').value);
+  if ($('hasAlt').value) p.set('has_alt', $('hasAlt').value);
+  if ($('dateFrom').value) p.set('date_from', $('dateFrom').value);
+  if ($('dateTo').value) p.set('date_to', $('dateTo').value);
+  return p;
+}
+
+let loadRequestId = 0;
+
+async function loadPhotos() {
+  const accountChanged = currentAccount !== $('account').value;
+  currentAccount = $('account').value;
+  if (accountChanged) await loadPlaceOptions();
+  const params = filterParams();
+  const requestId = ++loadRequestId;
+
+  $('count').textContent = 'Loading…';
+  let resp;
+  try {
+    resp = await fetch(`/api/photos/${currentAccount}?${params}`);
+  } catch (err) {
+    if (requestId === loadRequestId) $('count').textContent = `Load failed: ${err.message}`;
+    return;
+  }
+  if (requestId !== loadRequestId) return; // a newer filter change superseded this request
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    $('count').textContent = `Load failed (${resp.status})`;
+    console.error('Failed to load photos:', resp.status, text);
+    return;
+  }
+
+  photos = await resp.json();
+  selectedIndex = photos.length ? 0 : -1;
+  renderList();
+  renderEditor();
+}
+
+function renderList() {
+  $('count').textContent = `${photos.length} photo(s)`;
+  $('list').innerHTML = photos.map((p, i) => `
+    <div class="list-item ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
+      <img src="/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/image" loading="lazy">
+      <div class="info">
+        <div class="fname">${p.filename}</div>
+        <div class="tag">${p.place || (p.alt_text ? '' : 'needs alt text')}</div>
+      </div>
+    </div>
+  `).join('');
+  [...document.querySelectorAll('.list-item')].forEach(el => {
+    el.addEventListener('click', () => { selectedIndex = parseInt(el.dataset.idx); renderList(); renderEditor(); });
+  });
+}
+
+function renderEditor() {
+  const editor = $('editor');
+  if (selectedIndex < 0 || !photos[selectedIndex]) {
+    editor.innerHTML = '<div class="empty">Select a photo</div>';
+    return;
+  }
+  const p = photos[selectedIndex];
+  editor.innerHTML = `
+    <div class="editor-top">
+      <div class="editor-image">
+        <img src="/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/image">
+        <div class="meta-line" style="margin-top:8px">${p.filename} &middot; ${p.date_taken || 'no date'} &middot; ${p.status}</div>
+      </div>
+      <div class="editor-fields">
+        <label class="curated-toggle">
+          <input type="checkbox" id="f_curated" ${p.status === 'curated' ? 'checked' : ''} ${p.status === 'posted' ? 'disabled' : ''}>
+          Curated — ready to post
+        </label>
+        <div class="row">
+          ${allAccounts.filter(a => a !== currentAccount).map(a =>
+            `<button class="secondary move-account-btn" data-to="${a}">Move to ${a}</button>`
+          ).join('')}
+        </div>
+        <div class="field">
+          <label>Alt text</label>
+          <textarea id="f_alt">${p.alt_text || ''}</textarea>
+        </div>
+        <div class="field">
+          <label>Caption &amp; extra hashtags (optional)</label>
+          <textarea id="f_msg" placeholder="Feed and location hashtags are added automatically">${p.message || ''}</textarea>
+        </div>
+        <div class="field">
+          <label>Post preview</label>
+          <div class="preview" id="f_preview"></div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>Latitude</label>
+            <input id="f_lat" type="number" step="any" value="${p.lat ?? ''}">
+          </div>
+          <div class="field">
+            <label>Longitude</label>
+            <input id="f_lon" type="number" step="any" value="${p.lon ?? ''}">
+          </div>
+        </div>
+        <div class="field">
+          <label>Place</label>
+          <input id="f_place" type="text" autocomplete="off" list="placeOptions" value="${p.place ?? ''}">
+          <datalist id="placeOptions">${placeOptions.map(o => `<option value="${o}">`).join('')}</datalist>
+        </div>
+        <div class="row">
+          <button class="secondary" id="btnGeocode">Look up place from lat/lon</button>
+        </div>
+        <div class="row">
+          <button id="btnSave">Save</button>
+          <span class="status" id="saveStatus"></span>
+        </div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="secondary" id="btnPrev">&larr; Prev</button>
+      <button class="secondary" id="btnNext">Next &rarr;</button>
+      <button class="danger" id="btnDelete">Delete photo</button>
+    </div>
+  `;
+  $('btnPrev').onclick = () => { if (selectedIndex > 0) { selectedIndex--; renderList(); renderEditor(); } };
+  $('btnNext').onclick = () => { if (selectedIndex < photos.length - 1) { selectedIndex++; renderList(); renderEditor(); } };
+  renderPreview(p);
+  $('btnSave').onclick = save;
+  $('f_place').addEventListener('change', save);
+  $('btnGeocode').onclick = geocode;
+  $('f_curated').addEventListener('change', (e) => toggleCurated(e.target.checked));
+  $('btnDelete').onclick = deletePhoto;
+  [...document.querySelectorAll('.move-account-btn')].forEach(btn => {
+    btn.onclick = () => moveToAccount(btn.dataset.to);
+  });
+}
+
+function renderPreview(p) {
+  const text = p.post_preview || '';
+  $('f_preview').textContent = text;
+  const n = document.createElement('div');
+  n.className = 'count';
+  n.textContent = `${[...text].length} / 300 characters`;
+  $('f_preview').appendChild(n);
+}
+
+async function moveToAccount(toAccount) {
+  const p = photos[selectedIndex];
+  if (!confirm(`Move ${p.filename} to ${toAccount}? It will land in that account's holding-pen for review.`)) {
+    return;
+  }
+  await save(); // persist any unsaved edits before the file moves
+  const resp = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/account`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({to_account: toAccount})
+  });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    alert(`Move failed: ${text}`);
+    return;
+  }
+  photos.splice(selectedIndex, 1);
+  if (selectedIndex >= photos.length) selectedIndex = photos.length - 1;
+  renderList();
+  renderEditor();
+}
+
+async function deletePhoto() {
+  const p = photos[selectedIndex];
+  if (!confirm(`Permanently delete ${p.filename}? This removes the file and its metadata. Cannot be undone.`)) {
+    return;
+  }
+  await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}`, {method: 'DELETE'});
+  photos.splice(selectedIndex, 1);
+  if (selectedIndex >= photos.length) selectedIndex = photos.length - 1;
+  renderList();
+  renderEditor();
+}
+
+async function toggleCurated(checked) {
+  await save(); // persist any unsaved edits before the file moves
+  const p = photos[selectedIndex];
+  const newStatus = checked ? 'curated' : 'holding-pen';
+  const updated = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/status`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status: newStatus})
+  }).then(r => r.json());
+  p.status = updated.status;
+
+  const currentFilter = $('status').value;
+  if (currentFilter !== 'all' && currentFilter !== p.status) {
+    photos.splice(selectedIndex, 1);
+    if (selectedIndex >= photos.length) selectedIndex = photos.length - 1;
+  }
+  renderList();
+  renderEditor();
+}
+
+async function save() {
+  const p = photos[selectedIndex];
+  const body = {
+    alt_text: $('f_alt').value,
+    message: $('f_msg').value,
+    lat: $('f_lat').value,
+    lon: $('f_lon').value,
+    place: $('f_place').value,
+  };
+  const updated = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  }).then(r => r.json());
+  Object.assign(photos[selectedIndex], updated);
+  renderPreview(photos[selectedIndex]);
+  if (body.place && !placeOptions.includes(body.place)) placeOptions.push(body.place);
+  $('saveStatus').textContent = 'Saved';
+  setTimeout(() => { const s = $('saveStatus'); if (s) s.textContent = ''; }, 1500);
+  renderList();
+}
+
+async function geocode() {
+  await save();
+  const p = photos[selectedIndex];
+  const updated = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/geocode`, {method: 'POST'}).then(r => r.json());
+  Object.assign(photos[selectedIndex], updated);
+  renderEditor();
+}
+
+['account', 'status', 'q', 'hasGeo', 'hasAlt', 'dateFrom', 'dateTo'].forEach(id => {
+  $(id).addEventListener('change', loadPhotos);
+});
+$('q').addEventListener('keyup', (e) => { if (e.key === 'Enter') loadPhotos(); });
+
+$('btnSyncLocations').addEventListener('click', async () => {
+  const account = $('account').value;
+  $('syncResult').textContent = 'Syncing…';
+  const summary = await fetch(`/api/sync-locations/${account}`, {method: 'POST'}).then(r => r.json());
+  $('syncResult').textContent =
+    `Checked ${summary.checked}, alt text +${summary.alt_text_updated}`;
+  loadPhotos();
+});
+
+loadAccounts().then(async () => { $('account').value = currentAccount; await loadPlaceOptions(); loadPhotos(); });
+</script>
+</body>
+</html>
