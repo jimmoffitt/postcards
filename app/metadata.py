@@ -437,7 +437,7 @@ def date_line(entry: dict, feed_cfg: dict) -> str:
 
 def compose_message(entry: dict, feed_cfg: dict, location_tags: dict) -> str:
     """The caption as typed, then a blank line, the location hashtags and the
-    feed's hashtags, then the date line on its own line. Over the length
+    feed's hashtags, then a blank line and the date line. Over the length
     limit, location tags are dropped first (from the end), then feed tags;
     the caption itself is only cut if it's too long on its own."""
     caption = (entry.get("message") or "").strip()
@@ -445,7 +445,7 @@ def compose_message(entry: dict, feed_cfg: dict, location_tags: dict) -> str:
     dated = date_line(entry, feed_cfg)
 
     def join():
-        tail = "\n".join(x for x in (" ".join(location + feed), dated) if x)
+        tail = "\n\n".join(x for x in (" ".join(location + feed), dated) if x)
         return f"{caption}\n\n{tail}" if caption and tail else (caption or tail)
 
     while (location or feed) and len(join()) > MAX_POST_CHARS:

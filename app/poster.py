@@ -23,6 +23,7 @@ Usage:
     python3 poster.py --check                     # validate config/logins, show what's queued
     python3 poster.py --once                      # post one photo per feed NOW (ignores the schedule)
     python3 poster.py --once --dry-run            # ...pick + log only, post/move nothing
+    python3 poster.py --once --workers PostcardsFromHome --photo IMG_1234.jpg  # post that photo now
 """
 
 from __future__ import annotations
@@ -248,9 +249,17 @@ def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict,
     return sorted(shuffled, key=band)  # stable, so each band stays shuffled
 
 
-def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool) -> bool:
-    """Posts one photo. Returns True if something was posted."""
+def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool,
+              photo: str = None) -> bool:
+    """Posts one photo -- `photo` if given, else per the feed's order.
+    Returns True if something was posted."""
     entries, candidates = queue(account)
+    queued = len(candidates)
+    if photo:
+        if photo not in candidates:
+            logger.error("[%s] %s isn't a curated, unposted photo with metadata -- nothing posted", account, photo)
+            return False
+        candidates = [photo]
     if not candidates:
         logger.info("[%s] no curated photos ready to post -- nothing to do", account)
         return False
@@ -275,7 +284,7 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
     logger.info("[%s] selected %s, taken %s%s (%d curated remaining; %d bytes, metadata stripped, %s)",
                 account, filename, meta.get("date_taken") or "on an unknown date",
                 "" if distance is None else f", {distance} days from today's date",
-                len(candidates), len(image.data), image.method)
+                queued, len(image.data), image.method)
 
     if not meta.get("alt_text"):
         logger.warning("[%s] %s has no alt_text -- posting anyway", account, filename)
@@ -296,11 +305,12 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
     return True
 
 
-def attempt(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool) -> None:
+def attempt(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool,
+            photo: str = None) -> None:
     state = load_state(account)
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
-        if run_cycle(account, feed_cfg, handle, app_password, dry_run):
+        if run_cycle(account, feed_cfg, handle, app_password, dry_run, photo):
             state["last_posted_at"] = now.isoformat()
     except Exception:
         logger.exception("[%s] post cycle failed, will try again at the next slot", account)
@@ -309,7 +319,8 @@ def attempt(account: str, feed_cfg: dict, handle: str, app_password: str, dry_ru
         save_state(account, state)
 
 
-def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.Event) -> None:
+def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.Event,
+                photo: str = None) -> None:
     handle, app_password = config.credentials(account)
     if not dry_run and (not handle or not app_password):
         logger.error("[%s] missing %s_BSKY_HANDLE / %s_BSKY_APP_PASSWORD in .local.env",
@@ -317,7 +328,7 @@ def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.E
         return
 
     if once:
-        attempt(account, current_feeds()[account], handle, app_password, dry_run)
+        attempt(account, current_feeds()[account], handle, app_password, dry_run, photo)
         return
 
     cfg = current_feeds()[account]
@@ -432,6 +443,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--once", action="store_true", help="Post one photo per feed now, then exit")
     parser.add_argument("--check", action="store_true", help="Validate config and logins, show queues, then exit")
+    parser.add_argument("--photo", default=None, metavar="FILENAME",
+                        help="With --once and one --workers feed: post this curated photo instead of picking one")
     args = parser.parse_args()
 
     log_path = config.app_path("LOG_PATH", "logs/poster.log")
@@ -459,6 +472,9 @@ def main():
     else:
         accounts = [a for a, c in feeds.items() if c["enabled"]]
 
+    if args.photo and not (args.once and len(accounts) == 1):
+        parser.error("--photo needs --once and exactly one feed in --workers")
+
     if args.check:
         sys.exit(0 if check(accounts, feeds) else 1)
 
@@ -476,7 +492,7 @@ def main():
     signal.signal(signal.SIGINT, _handle_signal)
 
     threads = [
-        threading.Thread(target=worker_loop, args=(account, args.dry_run, args.once, stop_event),
+        threading.Thread(target=worker_loop, args=(account, args.dry_run, args.once, stop_event, args.photo),
                          name=f"worker-{account}", daemon=True)
         for account in accounts
     ]
