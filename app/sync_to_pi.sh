@@ -47,7 +47,7 @@ DEPLOY_HOST="${DEPLOY_HOST:-$(env_value DEPLOY_HOST)}"
 DEPLOY_DIR="${DEPLOY_DIR:-$(env_value DEPLOY_DIR)}"
 DEPLOY_DIR="${DEPLOY_DIR:-projects/postcards}"  # relative = under the Pi user's home
 if [[ -z "$DEPLOY_HOST" ]]; then
-  echo "Set DEPLOY_HOST (e.g. pi@raspberrypi.local) in app/.local.env" >&2
+  echo "Set DEPLOY_HOST (e.g. jim@pi.local) in app/.local.env" >&2
   exit 1
 fi
 

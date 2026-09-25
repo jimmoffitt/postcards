@@ -219,7 +219,9 @@ The poster keeps two things in `app/state/`:
 You curate on the laptop and post from the Pi. Run `app/sync_to_pi.sh` on the laptop whenever you've
 curated or changed config. First set these in `app/.local.env`:
 
-- `DEPLOY_HOST`: an SSH host, e.g. `jim@192.168.1.50`, or a `Host` alias from `~/.ssh/config`.
+- `DEPLOY_HOST`: an SSH host, e.g. `jim@pi.local`, or a `Host` alias from `~/.ssh/config`. Prefer the
+  `.local` hostname to an IP address: it keeps working if the router gives the Pi a new address.
+  The [cheat sheet](docs/CHEATSHEET.md#finding-the-pis-ip-address) covers what to do if it doesn't resolve.
 - `DEPLOY_DIR`: optional. The default is `projects/postcards`, relative to the Pi user's home, which
   mirrors `~/projects/postcards` on the laptop.
 
@@ -338,14 +340,14 @@ To add the next feed:
 - **SD card wear.** The only regular writes are a small state file per post and a few log lines.
   `app/logs/poster.log` is never rotated, but it grows by only a few KB a day. To avoid it, set
   `LOG_PATH=/dev/null` in `.local.env` and use journald only.
-- **SSH.** Use key-based SSH (`ssh-copy-id jim@<pi-address>`) so `sync_to_pi.sh` doesn't prompt
+- **SSH.** Use key-based SSH (`ssh-copy-id jim@pi.local`) so `sync_to_pi.sh` doesn't prompt
   for a password on every step.
 - **Don't edit files on the Pi.** Tracked files are changed only by syncing from the laptop.
   If a tracked file is edited on the Pi, the next sync's git push is refused until you revert it
   (`git -C ~/projects/postcards checkout -- .`). `app/.local.env`, `state/`, `logs/` and `photos/`
   aren't tracked, so they're safe.
 - **Access to the curation app.** It's for the laptop and listens on `127.0.0.1` only. If you ever
-  run it on the Pi, reach it with an SSH tunnel (`ssh -L 5001:localhost:5001 jim@<pi-address>`)
+  run it on the Pi, reach it with an SSH tunnel (`ssh -L 5001:localhost:5001 jim@pi.local`)
   rather than binding `0.0.0.0`: it has no authentication and can delete photos.
 - **Updating.** Commit on the laptop, then run `app/sync_to_pi.sh --restart`. If `requirements.txt`
   changed, also run `.venv/bin/pip install -r requirements.txt` on the Pi.
