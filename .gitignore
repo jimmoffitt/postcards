@@ -24,3 +24,5 @@ photos/
 metadata_*.json
 geocode_cache.json
 .metadata-backups/
+# ...except the sample set, which has no GPS (see samples/README.md).
+!samples/metadata_*.json

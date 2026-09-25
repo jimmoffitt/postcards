@@ -48,6 +48,8 @@ photos/<Feed>/               the photos themselves; not in git
     holding-pen/             not reviewed yet (new photos land here)
     curated/                 approved, and the poster only posts from here
     posted/                  already posted
+samples/                     10 sample photos + metadata to try the app with (no GPS)
+docs/CHEATSHEET.md           quick reference: streams, the Pi, services
 app/
     upload_prep.py           strips photo metadata (GPS etc.) before upload
     feeds.json               feed definitions: on/off, hashtags, schedule, timezone
@@ -88,6 +90,10 @@ name is uppercased, e.g. `POSTCARDSFROMHOME_BSKY_HANDLE`. Use a Bluesky **app pa
 The file is gitignored.
 
 The alt-text step also needs an Anthropic API key in `ANTHROPIC_API_KEY`.
+
+**Try it first with the sample photos:** `samples/` has five photos per feed with metadata, so you
+can run the curation app and a dry run of the poster before adding your own photos. See
+[samples/README.md](samples/README.md).
 
 ## Feeds: `feeds.json`
 

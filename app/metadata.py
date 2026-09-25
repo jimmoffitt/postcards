@@ -34,6 +34,7 @@ config.load_dotenv()  # before PHOTOS_ROOT is read, however this module is enter
 APP_DIR = config.APP_DIR
 PROJECT_ROOT = APP_DIR.parent
 PHOTOS_ROOT = config.app_path("PHOTOS_ROOT", "../photos")
+METADATA_DIR = config.app_path("METADATA_DIR", "..")  # where metadata_<Account>.json live
 GEOCODE_CACHE_PATH = PROJECT_ROOT / "geocode_cache.json"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "postcards-app/1.0"
@@ -70,7 +71,7 @@ def posted_dir(account: str) -> Path:
 
 
 def metadata_path(account: str) -> Path:
-    return PROJECT_ROOT / f"metadata_{account}.json"
+    return METADATA_DIR / f"metadata_{account}.json"
 
 
 def load_metadata(account: str) -> dict:
