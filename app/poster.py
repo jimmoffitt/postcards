@@ -417,9 +417,10 @@ def check(accounts: list[str], feeds: dict) -> bool:
             print(f"   ! no alt text: {', '.join(no_alt)}")
         print(f"   next post: {describe_next(load_state(account), cfg)}")
         if candidates:
-            sample = random.choice(candidates)
+            sample = order_candidates(candidates, entries, cfg, datetime.datetime.now(cfg["tz"]).date())[0]
             text = md.compose_message(entries[sample], cfg, location_tags)
-            print(f"   sample ({sample}):\n      " + text.replace("\n", "\n      "))
+            print(f"   a likely next post ({sample}, taken {entries[sample].get('date_taken') or 'undated'}):\n      "
+                  + text.replace("\n", "\n      "))
         print()
     print("All checks passed." if ok else "Some checks FAILED.")
     return ok
