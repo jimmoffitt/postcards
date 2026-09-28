@@ -320,7 +320,7 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
                 meta.get("date_taken") or "on an unknown date",
                 "" if distance is None else f", {distance} days from today's date",
                 region or "no known region",
-                f" -- repeats a recent region ({', '.join(recent)}): nothing else was left"
+                f" -- repeats a recent region ({', '.join(dict.fromkeys(recent))}): nothing else was left"
                 if region in recent and filename not in up_next and distance != 0 else "",
                 queued, len(image.data), image.method)
 
@@ -462,7 +462,7 @@ def check(accounts: list[str], feeds: dict) -> bool:
         recent = recent_regions(account, entries, cfg["region_cooldown"])
         if cfg["region_cooldown"]:
             print(f"   regions: none repeated within {cfg['region_cooldown']} posts while others are queued; "
-                  f"waiting now: {', '.join(recent) or '(none)'}")
+                  f"waiting now: {', '.join(dict.fromkeys(recent)) or '(none)'}")
             by_region = collections.Counter(md.region(entries[f].get("place")) or "(no place)" for f in candidates)
             print("   queued by region: " + ", ".join(f"{r} {n}" for r, n in by_region.most_common()))
         print(f"   queue: {len(candidates)} ready ({len(up_next)} up next, {len(candidates) - len(up_next)} curated; "
