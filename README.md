@@ -46,7 +46,8 @@ metadata_<Feed>.json         per-photo alt text, caption, place, GPS, date; not 
 geocode_cache.json           cached OpenStreetMap reverse-geocoding results; not in git
 photos/<Feed>/               the photos themselves; not in git
     holding-pen/             not reviewed yet (new photos land here)
-    curated/                 approved, and the poster only posts from here
+    curated/                 approved; the poster posts from here...
+    up-next/                 ...and from here first: hand-picked to go out next
     posted/                  already posted
 samples/                     10 sample photos + metadata to try the app with (no GPS)
 docs/CHEATSHEET.md           quick reference: streams, the Pi, services
@@ -64,7 +65,7 @@ app/
     logs/                    not in git
 ```
 
-A photo only moves forward: `holding-pen/` → `curated/` → `posted/`. Its folder is its status.
+A photo moves `holding-pen/` → `curated/` or `up-next/` → `posted/`. Its folder is its status.
 Nothing else records it.
 
 ## Setup (laptop)
@@ -120,22 +121,31 @@ block overrides them, then the feed's own entry overrides both:
 | `interval_hours` | `6` | Whole minutes, from 5 minutes to 24 hours |
 | `window_start` / `window_end` | `8` / `22` | Whole hours, local time |
 | `window_enabled` | `true` | If `false`, slots start at midnight and run all day |
-| `order` | `seasonal` | `seasonal` or `random`; see below |
+| `order` | `on_this_day` | `on_this_day`, `seasonal` or `random`; see below |
 | `season_days` | `21` | For `seasonal`: how close, in days, a photo's calendar date must be to today's |
+| `region_cooldown` | `2` | Posts before a region (state or country) may repeat, while photos from elsewhere are queued; `0` turns it off |
 | `date_format` | `"Photo taken %Y-%m-%d"` | Last line of each post ([strftime](https://strftime.org) codes, e.g. `"Taken %B %Y"`); `null` to leave it off |
 
 **Schedule.** Posts go out at fixed local times: `window_start`, then every `interval_hours` until
 `window_end`. With the defaults that's **08:00, 14:00 and 20:00**, and the times stay on local time
 through daylight-saving changes.
 
-**Which photo.** With `"order": "seasonal"`, each slot picks at random from the curated photos
-taken within `season_days` of today's calendar date, in any year. So in late September you get
-September and October photos, whatever year they're from. When none are that close, the window
-widens in `season_days` steps. Photos with no date go last. With `"order": "random"`, dates are
-ignored. The date comes from the photo's EXIF capture time (`date_taken` in the metadata).
+**Which photo.** Each slot picks from these, in turn:
 
-To keep posts in season, curate photos from around the current time of year: `--check` shows how
-many queued photos are in season right now.
+1. **Up next.** Anything in `up-next/` goes before everything in `curated/`.
+2. **On this day.** With `"order": "on_this_day"` (the default), a photo taken on today's month and
+   day, in any earlier year, goes first.
+3. **A different region.** A photo's region is the last part of its place, its state or country:
+   "Near San Luis Obispo, CA" and "Big Sur, CA" are both California. A photo from the same region
+   as any of the feed's last `region_cooldown` posts waits while photos from elsewhere are queued.
+   Photos with no place are never held back. An on-this-day photo ignores this rule.
+4. Otherwise, **random**.
+
+With `"order": "seasonal"`, step 2 is skipped and, after step 3, photos taken within `season_days`
+of today's calendar date (any year) come first, widening in `season_days` steps; undated photos go
+last. With `"order": "random"`, dates are ignored. The date comes from the photo's EXIF capture
+time (`date_taken` in the metadata). `--check` shows how many queued photos match today's date, the
+queue by region, and which regions are waiting right now.
 
 **Post text.** Each post is built when it's sent:
 
@@ -200,7 +210,8 @@ For each photo you can:
 
 - Edit the alt text, caption, place and GPS.
 - Look up the place from GPS.
-- Check **Curated** to move the photo to `curated/`.
+- Set its status: **Holding pen**, **Curated** (ready to post) or **Up next** (posted before
+  anything in Curated). A photo can go straight from the holding pen to Up next.
 - Move it to another feed.
 - Delete it.
 
@@ -271,7 +282,7 @@ It works in three steps:
    access and you don't have to push first. The Pi's repo uses
    `receive.denyCurrentBranch=updateInstead`, so its files update in place. The first sync creates
    the repo. Next it copies `metadata_<Feed>.json`, which isn't in git.
-3. **Push photos.** It makes the Pi's `holding-pen/` and `curated/` match the laptop's, deletes
+3. **Push photos.** It makes the Pi's `holding-pen/`, `curated/` and `up-next/` match the laptop's, deletes
    included. The laptop is the source of truth for curation. `posted/` is only ever added to.
 
 `feeds.json` edits apply on the Pi within a minute of a sync, with no restart. That covers
@@ -294,8 +305,8 @@ The Pi mirrors the laptop:
 ├── metadata_*.json                    copied by sync (not in git); old versions in .metadata-backups/
 ├── location_tags.json
 └── photos/
-    ├── PostcardsFromHome/{holding-pen,curated,posted}/
-    └── SomePostcards/{holding-pen,curated,posted}/
+    ├── PostcardsFromHome/{holding-pen,curated,up-next,posted}/
+    └── SomePostcards/{holding-pen,curated,up-next,posted}/
 ```
 
 Only the feed folders listed in `feeds.json` are synced. Anything else under `photos/` stays on
@@ -406,7 +417,7 @@ Curate more photos and sync, and posting resumes at the next slot.
 - **`feeds.json is invalid, keeping previous settings`**: the log line names the problem. Fix it and
   sync again.
 - **`missed the HH:MM slot`**: the Pi was down or the clock jumped. Posting resumes at the next slot.
-- **`is in curated/ but was already posted -- skipping`**: a sync copied back a photo the Pi had
+- **`is queued but was already posted -- skipping`**: a sync copied back a photo the Pi had
   already posted. It's harmless, and the next sync cleans it up.
 - **`skipping <photo>: ...`**: that photo couldn't be prepared for upload (e.g. it's over
   Bluesky's size limit). Another photo is posted instead. Run `prepare_photos.py` on it again, or

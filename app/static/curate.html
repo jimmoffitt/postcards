@@ -32,8 +32,14 @@
   .list-item .tag { font-size: 10px; color: #7ab; }
   .list-item.posted .fname { color: #666; }
   .list-item.curated .tag { color: #7c7; }
-  .curated-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .curated-toggle input { width: 16px; height: 16px; }
+  .list-item.up-next .tag { color: #e0b050; }
+  .list-item .badge { font-size: 10px; color: #e0b050; margin-left: 4px; }
+  .status-switch { display: flex; border: 1px solid #383c44; border-radius: 6px; overflow: hidden; width: fit-content; }
+  .status-switch button { background: #22252b; color: #bbb; border-radius: 0; padding: 7px 14px; }
+  .status-switch button + button { border-left: 1px solid #383c44; }
+  .status-switch button.on { background: #2563eb; color: #fff; }
+  .status-switch button.on[data-status="up-next"] { background: #b7791f; }
+  .status-note { font-size: 12px; color: #888; margin-top: 4px; }
 
   .editor { display: flex; flex-direction: column; overflow: hidden; }
   .editor-top { display: flex; gap: 20px; padding: 20px; overflow-y: auto; flex: 1; }
@@ -72,6 +78,7 @@
         <select id="status">
           <option value="holding-pen" selected>Holding pen</option>
           <option value="curated">Curated</option>
+          <option value="up-next">Up next</option>
           <option value="posted">Posted</option>
           <option value="all">All</option>
         </select>
@@ -155,7 +162,7 @@ async function loadStreamInfo() {
     const info = await fetch(`/api/stream/${currentAccount}`).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
     el.textContent = info.summary;
     el.title = `Posts at ${info.slots.join(', ')} ${info.timezone} (${info.posts_per_day}/day). ` +
-               `${info.curated} curated, ${info.holding_pen} in the holding pen.`;
+               `${info.curated} ready (${info.up_next} up next), ${info.holding_pen} in the holding pen.`;
     el.classList.toggle('paused', !info.enabled);
   } catch (err) {
     el.textContent = `Couldn't read the stream settings (feeds.json): ${err.message}`;
@@ -199,7 +206,7 @@ function renderList() {
     <div class="list-item ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
       <img src="/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/image" loading="lazy">
       <div class="info">
-        <div class="fname">${p.filename}</div>
+        <div class="fname">${p.filename}${p.status === 'up-next' && $('status').value !== 'up-next' ? '<span class="badge">UP NEXT</span>' : ''}</div>
         <div class="tag">${p.place || (p.alt_text ? '' : 'needs alt text')}</div>
       </div>
     </div>
@@ -223,10 +230,14 @@ function renderEditor() {
         <div class="meta-line" style="margin-top:8px">${p.filename} &middot; ${p.date_taken || 'no date'} &middot; ${p.status}</div>
       </div>
       <div class="editor-fields">
-        <label class="curated-toggle">
-          <input type="checkbox" id="f_curated" ${p.status === 'curated' ? 'checked' : ''} ${p.status === 'posted' ? 'disabled' : ''}>
-          Curated — ready to post
-        </label>
+        <div>
+          ${p.status === 'posted' ? '<div class="status-note">Posted</div>' : `
+          <div class="status-switch">
+            ${STATUS_CHOICES.map(([s, label]) =>
+              `<button class="${p.status === s ? 'on' : ''}" data-status="${s}">${label}</button>`).join('')}
+          </div>
+          <div class="status-note">${STATUS_NOTES[p.status] || ''}</div>`}
+        </div>
         <div class="row">
           ${allAccounts.filter(a => a !== currentAccount).map(a =>
             `<button class="secondary move-account-btn" data-to="${a}">Move to ${a}</button>`
@@ -280,7 +291,9 @@ function renderEditor() {
   $('btnSave').onclick = save;
   $('f_place').addEventListener('change', save);
   $('btnGeocode').onclick = geocode;
-  $('f_curated').addEventListener('change', (e) => toggleCurated(e.target.checked));
+  [...document.querySelectorAll('.status-switch button')].forEach(btn => {
+    btn.onclick = () => { if (btn.dataset.status !== p.status) setStatus(btn.dataset.status); };
+  });
   $('btnDelete').onclick = deletePhoto;
   [...document.querySelectorAll('.move-account-btn')].forEach(btn => {
     btn.onclick = () => moveToAccount(btn.dataset.to);
@@ -330,14 +343,24 @@ async function deletePhoto() {
   renderEditor();
 }
 
-async function toggleCurated(checked) {
+const STATUS_CHOICES = [['holding-pen', 'Holding pen'], ['curated', 'Curated'], ['up-next', 'Up next']];
+const STATUS_NOTES = {
+  'holding-pen': 'Not posted until it\u2019s moved to Curated or Up next.',
+  'curated': 'Ready to post; picked by season and region.',
+  'up-next': 'Posted before anything in Curated.',
+};
+
+async function setStatus(newStatus) {
   await save(); // persist any unsaved edits before the file moves
   const p = photos[selectedIndex];
-  const newStatus = checked ? 'curated' : 'holding-pen';
-  const updated = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/status`, {
+  const resp = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/status`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status: newStatus})
-  }).then(r => r.json());
-  p.status = updated.status;
+  });
+  if (!resp.ok) {
+    alert(`Move failed: ${await resp.text().catch(() => resp.statusText)}`);
+    return;
+  }
+  p.status = (await resp.json()).status;
 
   const currentFilter = $('status').value;
   if (currentFilter !== 'all' && currentFilter !== p.status) {

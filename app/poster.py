@@ -3,8 +3,9 @@
 
 One process, one thread per enabled feed in feeds.json, each posting at
 fixed local times (config.slot_times -- by default 08:00, 14:00, 20:00).
-At each slot, its worker picks a curated photo -- by default one taken around
-this time of year (see order_candidates) -- posts it (alt text from
+At each slot, its worker picks a photo -- from up-next/ if there are any,
+else from curated/; one taken on today's date in an earlier year if there is
+one, else not from the region of the feed's last few posts (see order_candidates) -- posts it (alt text from
 metadata_<Account>.json, post text from compose_message: caption + feed
 hashtags + place hashtags), and moves the file into posted/.
 
@@ -29,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime
 import json
 import logging
@@ -121,6 +123,29 @@ def record_post(account: str, filename: str, uri: str, when: datetime.datetime) 
         f.write(line + "\n")
 
 
+def recent_regions(account: str, entries: dict, count: int) -> list[str]:
+    """Regions (see md.region) of the feed's last `count` posts, newest
+    first; posts with no place are skipped over, not counted."""
+    if count <= 0 or not POSTED_LOG.exists():
+        return []
+    with _log_lock, open(POSTED_LOG) as f:
+        lines = f.readlines()
+    regions = []
+    for line in reversed(lines):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("account") != account:
+            continue
+        r = md.region(entries.get(rec.get("filename"), {}).get("place"))
+        if r:
+            regions.append(r)
+            if len(regions) == count:
+                break
+    return regions
+
+
 def posted_filenames(account: str) -> set[str]:
     done = set(md.scan_posted(account))
     if POSTED_LOG.exists():
@@ -199,19 +224,21 @@ def current_feeds() -> dict:
 # Posting
 # ---------------------------------------------------------------------------
 
-def queue(account: str) -> tuple[dict, list[str]]:
-    """(metadata entries, curated filenames that are safe to post)."""
+def queue(account: str) -> tuple[dict, list[str], set[str]]:
+    """(metadata entries, filenames in up-next/ and curated/ that are safe
+    to post, the subset of those in up-next/)."""
     entries = md.load_metadata(account)
     done = posted_filenames(account)
+    up_next = set(md.scan_up_next(account))
     candidates = []
-    for f in md.scan_curated(account):
+    for f in md.scan_up_next(account) + md.scan_curated(account):
         if f in done:
-            logger.warning("[%s] %s is in curated/ but was already posted -- skipping", account, f)
+            logger.warning("[%s] %s is queued but was already posted -- skipping", account, f)
         elif f not in entries:
             logger.warning("[%s] %s has no metadata entry -- skipping", account, f)
         else:
             candidates.append(f)
-    return entries, candidates
+    return entries, candidates, up_next & set(candidates)
 
 
 def _day_of_year(month: int, day: int) -> int:
@@ -231,33 +258,38 @@ def season_distance(date_taken: str | None, today: datetime.date) -> int | None:
     return min(diff, 365 - diff)
 
 
-def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict,
-                     today: datetime.date) -> list[str]:
-    """Candidates in the order to try them. "random": shuffled. "seasonal":
-    photos taken within season_days of today's date (any year) first, then
-    within 2x season_days, and so on; random within each band. Undated
-    photos come last."""
-    shuffled = random.sample(candidates, len(candidates))
-    if feed_cfg["order"] == "random":
-        return shuffled
-    window = feed_cfg["season_days"]
+def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today: datetime.date,
+                     recent: list[str] = (), up_next: set[str] = frozenset()) -> list[str]:
+    """Candidates in the order to try them, sorted on these keys in turn:
+    1. up-next/ photos before curated/ ones;
+    2. "on_this_day": photos taken on today's month and day (any year) first;
+    3. photos from a region in `recent` (the regions of the last few posts)
+       after those from anywhere else, including photos with no place;
+    4. "seasonal": taken within season_days of today's date (any year)
+       first, then within 2x season_days, and so on; undated photos last.
+    Random among photos that tie on all of them."""
+    order, window = feed_cfg["order"], feed_cfg["season_days"]
+    recent = set(recent)
 
-    def band(filename):
+    def key(filename):
         d = season_distance(entries[filename].get("date_taken"), today)
-        return 10_000 if d is None else max(0, -(-d // window) - 1)  # ceil(d / window) - 1
+        on_this_day = order == "on_this_day" and d == 0
+        band = 0 if order != "seasonal" else 10_000 if d is None else max(0, -(-d // window) - 1)  # ceil(d/window)-1
+        return (filename not in up_next, not on_this_day,
+                md.region(entries[filename].get("place")) in recent, band)
 
-    return sorted(shuffled, key=band)  # stable, so each band stays shuffled
+    return sorted(random.sample(candidates, len(candidates)), key=key)  # stable, so ties stay shuffled
 
 
 def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool,
               photo: str = None) -> bool:
     """Posts one photo -- `photo` if given, else per the feed's order.
     Returns True if something was posted."""
-    entries, candidates = queue(account)
+    entries, candidates, up_next = queue(account)
     queued = len(candidates)
     if photo:
         if photo not in candidates:
-            logger.error("[%s] %s isn't a curated, unposted photo with metadata -- nothing posted", account, photo)
+            logger.error("[%s] %s isn't an unposted photo in curated/ or up-next/ with metadata -- nothing posted", account, photo)
             return False
         candidates = [photo]
     if not candidates:
@@ -267,23 +299,29 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
     # Seasonal (or random) order; a photo that can't be made safe to upload
     # (see upload_prep) is skipped in favour of the next, not posted as-is.
     today = datetime.datetime.now(feed_cfg["tz"]).date()
-    for filename in order_candidates(candidates, entries, feed_cfg, today):
+    recent = recent_regions(account, entries, feed_cfg["region_cooldown"])
+    for filename in order_candidates(candidates, entries, feed_cfg, today, recent, up_next):
         try:
-            image = upload_prep.prepare(md.curated_dir(account) / filename)
+            image = upload_prep.prepare(md.find_photo(account, filename)[0])
             break
         except Exception as exc:
             logger.error("[%s] skipping %s: %s", account, filename, exc)
     else:
-        logger.error("[%s] none of the %d curated photos could be prepared -- nothing posted",
+        logger.error("[%s] none of the %d queued photos could be prepared -- nothing posted",
                      account, len(candidates))
         return False
 
     meta = entries[filename]
     message = md.compose_message(meta, feed_cfg, md.load_location_tags())
     distance = season_distance(meta.get("date_taken"), today)
-    logger.info("[%s] selected %s, taken %s%s (%d curated remaining; %d bytes, metadata stripped, %s)",
-                account, filename, meta.get("date_taken") or "on an unknown date",
+    region = md.region(meta.get("place"))
+    logger.info("[%s] selected %s%s, taken %s%s, in %s%s (%d queued; %d bytes, metadata stripped, %s)",
+                account, filename, " from up-next/" if filename in up_next else "",
+                meta.get("date_taken") or "on an unknown date",
                 "" if distance is None else f", {distance} days from today's date",
+                region or "no known region",
+                f" -- repeats a recent region ({', '.join(recent)}): nothing else was left"
+                if region in recent and filename not in up_next and distance != 0 else "",
                 queued, len(image.data), image.method)
 
     if not meta.get("alt_text"):
@@ -396,12 +434,12 @@ def check(accounts: list[str], feeds: dict) -> bool:
         if not md.curated_dir(account).exists():
             print(f"   ✗ no folder {md.curated_dir(account)}")
             ok = False
-        entries, candidates = queue(account)
+        entries, candidates, up_next = queue(account)
         # Run every queued photo through the same prep as a real post.
         unpostable, reencoded = [], 0
         for f in candidates:
             try:
-                reencoded += upload_prep.prepare(md.curated_dir(account) / f).method == "re-encoded"
+                reencoded += upload_prep.prepare(md.find_photo(account, f)[0]).method == "re-encoded"
             except Exception as exc:
                 unpostable.append(f"{f} ({exc})")
         no_alt = [f for f in candidates if not entries[f].get("alt_text")]
@@ -414,10 +452,21 @@ def check(accounts: list[str], feeds: dict) -> bool:
             undated = sum(1 for d in dists if d is None)
             print(f"   order: seasonal -- {in_season} photos taken within ±{cfg['season_days']} days of "
                   f"{today:%b %d} (any year)" + (f", {undated} undated (posted last)" if undated else ""))
+        elif cfg["order"] == "on_this_day":
+            today = datetime.datetime.now(cfg["tz"]).date()
+            on_day = sum(1 for f in candidates if season_distance(entries[f].get("date_taken"), today) == 0)
+            print(f"   order: on_this_day -- {on_day} photos taken on {today:%b %d} in an earlier year "
+                  f"(posted first); otherwise random")
         else:
             print("   order: random")
-        print(f"   queue: {len(candidates)} curated ready (~{len(candidates) / per_day:.0f} days at "
-              f"{per_day}/day), {len(md.scan_posted(account))} posted")
+        recent = recent_regions(account, entries, cfg["region_cooldown"])
+        if cfg["region_cooldown"]:
+            print(f"   regions: none repeated within {cfg['region_cooldown']} posts while others are queued; "
+                  f"waiting now: {', '.join(recent) or '(none)'}")
+            by_region = collections.Counter(md.region(entries[f].get("place")) or "(no place)" for f in candidates)
+            print("   queued by region: " + ", ".join(f"{r} {n}" for r, n in by_region.most_common()))
+        print(f"   queue: {len(candidates)} ready ({len(up_next)} up next, {len(candidates) - len(up_next)} curated; "
+              f"~{len(candidates) / per_day:.0f} days at {per_day}/day), {len(md.scan_posted(account))} posted")
         if unpostable:
             print(f"   ✗ can't be prepared for upload (will be skipped):\n      " + "\n      ".join(unpostable))
             ok = False
@@ -428,7 +477,8 @@ def check(accounts: list[str], feeds: dict) -> bool:
             print(f"   ! no alt text: {', '.join(no_alt)}")
         print(f"   next post: {describe_next(load_state(account), cfg)}")
         if candidates:
-            sample = order_candidates(candidates, entries, cfg, datetime.datetime.now(cfg["tz"]).date())[0]
+            sample = order_candidates(candidates, entries, cfg, datetime.datetime.now(cfg["tz"]).date(),
+                                      recent, up_next)[0]
             text = md.compose_message(entries[sample], cfg, location_tags)
             print(f"   a likely next post ({sample}, taken {entries[sample].get('date_taken') or 'undated'}):\n      "
                   + text.replace("\n", "\n      "))
@@ -444,7 +494,7 @@ def main():
     parser.add_argument("--once", action="store_true", help="Post one photo per feed now, then exit")
     parser.add_argument("--check", action="store_true", help="Validate config and logins, show queues, then exit")
     parser.add_argument("--photo", default=None, metavar="FILENAME",
-                        help="With --once and one --workers feed: post this curated photo instead of picking one")
+                        help="With --once and one --workers feed: post this photo (from curated/ or up-next/) instead of picking one")
     args = parser.parse_args()
 
     log_path = config.app_path("LOG_PATH", "logs/poster.log")

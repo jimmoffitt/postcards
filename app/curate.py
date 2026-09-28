@@ -62,14 +62,17 @@ def api_stream(account):
     cfg = config.load_feeds()[account]
     slots = config.slot_times(cfg)
     per_day = len(slots)
-    curated, holding = len(md.scan_curated(account)), len(md.scan_holding(account))
+    up_next = len(md.scan_up_next(account))
+    curated, holding = up_next + len(md.scan_curated(account)), len(md.scan_holding(account))
     every = _describe_interval(cfg["interval_hours"])
     if cfg["window_enabled"]:
         when = f"every {every} between {cfg['window_start']:02d}:00 and {cfg['window_end']:02d}:00"
     else:
         when = f"every {every}, around the clock"
-    remaining = (f"{curated / per_day:.1f} days remain in the \u2018Curated\u2019 folder and "
+    remaining = (f"{curated / per_day:.1f} days remain in the \u2018Curated\u2019 and \u2018Up next\u2019 folders and "
                  f"{holding / per_day:.1f} days in the \u2018Holding pen\u2019 folder")
+    if up_next:
+        remaining += f" ({up_next} up next, posted first)"
     if cfg["enabled"]:
         summary = f"{account} posts {when}. At this rate, {remaining}."
     else:
@@ -81,7 +84,7 @@ def api_stream(account):
         "posts_per_day": per_day,
         "slots": [t.strftime("%H:%M") for t in slots],
         "timezone": cfg["timezone"],
-        "curated": curated, "holding_pen": holding,
+        "curated": curated, "up_next": up_next, "holding_pen": holding,
         "curated_days": round(curated / per_day, 1), "holding_pen_days": round(holding / per_day, 1),
     })
 
@@ -105,7 +108,7 @@ def api_list_photos(account):
     if account not in md.ACCOUNTS:
         abort(404)
 
-    status = request.args.get("status", md.HOLDING_SUBDIR)  # holding-pen | curated | posted | all
+    status = request.args.get("status", md.HOLDING_SUBDIR)  # holding-pen | curated | up-next | posted | all
     q = request.args.get("q", "").strip().lower()
     has_geo = request.args.get("has_geo", "")  # "true" | "false" | ""
     has_alt = request.args.get("has_alt", "")  # "true" | "false" | ""
@@ -118,6 +121,7 @@ def api_list_photos(account):
     by_status = {
         md.HOLDING_SUBDIR: set(md.scan_holding(account)),
         md.CURATED_SUBDIR: set(md.scan_curated(account)),
+        md.UP_NEXT_SUBDIR: set(md.scan_up_next(account)),
         md.POSTED_SUBDIR: set(md.scan_posted(account)),
     }
 
@@ -218,20 +222,21 @@ def api_update_photo(account, filename):
 
 @app.put("/api/photos/<account>/<filename>/status")
 def api_set_status(account, filename):
-    """Move a photo between holding-pen and curated (the 'ready to post' checkbox).
-    Moving to/from posted isn't exposed here -- that's poster.py's job."""
+    """Move a photo between holding-pen, curated and up-next (the status
+    buttons). Moving to/from posted isn't exposed here -- that's poster.py's job."""
     if account not in md.ACCOUNTS:
         abort(404)
     body = request.get_json(force=True)
     to_status = body.get("status")
-    if to_status not in (md.HOLDING_SUBDIR, md.CURATED_SUBDIR):
-        abort(400, f"status must be {md.HOLDING_SUBDIR!r} or {md.CURATED_SUBDIR!r}")
+    allowed = (md.HOLDING_SUBDIR, md.CURATED_SUBDIR, md.UP_NEXT_SUBDIR)
+    if to_status not in allowed:
+        abort(400, f"status must be one of {list(allowed)}")
 
     _path, current_status = md.find_photo(account, filename)
     if current_status is None:
         abort(404)
     if current_status == md.POSTED_SUBDIR:
-        abort(400, "already posted, can't move back to holding-pen/curated")
+        abort(400, "already posted, can't move back to holding-pen/curated/up-next")
 
     md.move_photo(account, filename, to_status)
     return jsonify({"filename": filename, "status": to_status})

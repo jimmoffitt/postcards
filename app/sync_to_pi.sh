@@ -2,7 +2,8 @@
 # Sync curation work from the Mac to the Pi. Run on the Mac, any time.
 #
 #   1. Pull the Pi's posted/ photos back, and drop the Mac's now-stale copies
-#      of them from curated/ and holding-pen/ (so they can't be re-curated).
+#      of them from curated/, up-next/ and holding-pen/ (so they can't be
+#      re-curated).
 #   2. Push code, feeds.json and location_tags.json with git, straight from
 #      here to a repo on the Pi over ssh (no GitHub involved; the Pi's
 #      checkout updates in place). The first run creates that repo. Refuses
@@ -10,7 +11,7 @@
 #      code. Then copy the photo metadata (metadata_<Feed>.json -- not in
 #      git, since it holds GPS positions); the Pi keeps a dated copy of any
 #      version it replaces in .metadata-backups/.
-#   3. Mirror the Mac's holding-pen/ and curated/ onto the Pi (the Mac is the
+#   3. Mirror the Mac's holding-pen/, curated/ and up-next/ onto the Pi (the Mac is the
 #      source of truth for curation decisions, including deletes). posted/ is
 #      only ever added to, never deleted from, in either direction.
 #
@@ -69,7 +70,7 @@ for feed in $FEEDS; do
     echo "Missing $LOCAL_PHOTOS/$feed -- refusing to sync (check PHOTOS_ROOT, or create it for a new feed)" >&2
     exit 1
   fi
-  mkdir -p "$LOCAL_PHOTOS/$feed"/{holding-pen,curated,posted}
+  mkdir -p "$LOCAL_PHOTOS/$feed"/{holding-pen,curated,up-next,posted}
 done
 
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then
@@ -91,7 +92,7 @@ for feed in $FEEDS; do
   fi
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
-    for sub in curated holding-pen; do
+    for sub in curated up-next holding-pen; do
       if [[ -f "$LOCAL_PHOTOS/$feed/$sub/$f" ]]; then
         echo "  $feed: $f was posted -- removing stale copy from $sub/"
         run rm "$LOCAL_PHOTOS/$feed/$sub/$f"
@@ -125,7 +126,7 @@ fi
 echo
 echo "== 3. Push curation state to the Pi"
 for feed in $FEEDS; do
-  for sub in holding-pen curated; do
+  for sub in holding-pen curated up-next; do
     ssh "$DEPLOY_HOST" "mkdir -p '$REMOTE_PHOTOS/$feed/$sub'"
     "${RSYNC[@]}" --delete "$LOCAL_PHOTOS/$feed/$sub/" "$DEPLOY_HOST:$REMOTE_PHOTOS/$feed/$sub/"
   done

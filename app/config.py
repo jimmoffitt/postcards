@@ -8,10 +8,15 @@ feeds.json is the one place a photo stream is defined:
 Each feed's settings = built-in DEFAULTS, then the file's "defaults", then
 the feed's own entry.
 
-Which photo: with "order": "seasonal" (the default), photos taken within
-season_days of today's calendar date -- any year -- come first, chosen at
-random among themselves; with none that close, the window widens in
-season_days steps. "random" ignores dates.
+Which photo: with "order": "on_this_day" (the default), a photo taken on
+today's month and day, in any year, goes first; otherwise the pick is
+random. With "seasonal", photos taken within season_days of today's
+calendar date come first, chosen at random among themselves; with none
+that close, the window widens in season_days steps. "random" ignores
+dates. In every order, a photo from the
+same region (state/country) as any of the feed's last region_cooldown posts
+waits while photos from elsewhere are left, and anything in up-next/ goes
+before everything in curated/.
 
 Posts go out at fixed local times: window_start, then every interval_hours
 while before window_end -- with the built-in defaults (8-22, 6h) that's
@@ -44,11 +49,12 @@ DEFAULTS = {
     "window_start": 8,
     "window_end": 22,
     "timezone": "UTC",
-    "order": "seasonal",
+    "order": "on_this_day",
     "season_days": 21,
+    "region_cooldown": 2,  # posts before a region (state/country) may repeat; 0 = off
     "date_format": "Photo taken %Y-%m-%d",  # last line of each post; null to leave it off
 }
-ORDERS = ("seasonal", "random")
+ORDERS = ("on_this_day", "seasonal", "random")
 HASHTAG_RE = re.compile(r"#\w+")
 
 
@@ -110,6 +116,9 @@ def _validate(account: str, cfg: dict) -> None:
     days = cfg["season_days"]
     if not (isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= 182):
         raise ValueError(f"{account}: season_days must be a whole number of days from 1 to 182, got {days!r}")
+    cooldown = cfg["region_cooldown"]
+    if not (isinstance(cooldown, int) and not isinstance(cooldown, bool) and 0 <= cooldown <= 50):
+        raise ValueError(f"{account}: region_cooldown must be a whole number of posts from 0 to 50, got {cooldown!r}")
     try:
         ZoneInfo(cfg["timezone"])
     except (ZoneInfoNotFoundError, ValueError, TypeError):

@@ -44,15 +44,17 @@ GEOCODE_PRECISION = 4
 # Every feed in feeds.json, enabled or not -- curation works on all of them.
 ACCOUNTS = tuple(config.load_feeds())
 
-# Every account photo folder has three subfolders, and a photo moves
-# holding-pen -> curated -> posted, in order, and never skips a step:
+# Every account photo folder has four subfolders; a photo moves
+# holding-pen -> curated (or up-next) -> posted:
 #   holding-pen/  not yet reviewed / not ready to post (default landing spot)
-#   curated/      reviewed and marked ready -- poster.py only posts from here
+#   curated/      reviewed and marked ready -- poster.py posts from here...
+#   up-next/      ...and from here first: hand-picked to go out before anything in curated/
 #   posted/       already posted
 HOLDING_SUBDIR = "holding-pen"
 CURATED_SUBDIR = "curated"
+UP_NEXT_SUBDIR = "up-next"
 POSTED_SUBDIR = "posted"
-STATUSES = (HOLDING_SUBDIR, CURATED_SUBDIR, POSTED_SUBDIR)
+STATUSES = (HOLDING_SUBDIR, CURATED_SUBDIR, UP_NEXT_SUBDIR, POSTED_SUBDIR)
 
 
 def account_dir(account: str) -> Path:
@@ -65,6 +67,10 @@ def holding_dir(account: str) -> Path:
 
 def curated_dir(account: str) -> Path:
     return account_dir(account) / CURATED_SUBDIR
+
+
+def up_next_dir(account: str) -> Path:
+    return account_dir(account) / UP_NEXT_SUBDIR
 
 
 def posted_dir(account: str) -> Path:
@@ -98,11 +104,16 @@ def scan_curated(account: str) -> list[str]:
     return _scan(curated_dir(account))
 
 
+def scan_up_next(account: str) -> list[str]:
+    return _scan(up_next_dir(account))
+
+
 def scan_posted(account: str) -> list[str]:
     return _scan(posted_dir(account))
 
 
-_STATUS_DIR_FNS = {HOLDING_SUBDIR: holding_dir, CURATED_SUBDIR: curated_dir, POSTED_SUBDIR: posted_dir}
+_STATUS_DIR_FNS = {HOLDING_SUBDIR: holding_dir, CURATED_SUBDIR: curated_dir,
+                   UP_NEXT_SUBDIR: up_next_dir, POSTED_SUBDIR: posted_dir}
 
 
 def find_photo(account: str, filename: str) -> tuple[Path, str] | tuple[None, None]:
@@ -327,6 +338,15 @@ def place_component_tags(place: str, location_tags: dict = None) -> list[str]:
             if tag and tag not in tags:
                 tags.append(tag)
     return tags
+
+
+def region(place: str | None) -> str | None:
+    """The broad area a place is in -- its last comma-separated part (state
+    or country), with US state abbreviations expanded: "Near San Luis
+    Obispo, CA" and "Montaña de Oro State Park, California" are both
+    "California". None for no place."""
+    last = (place or "").split(",")[-1].strip()
+    return US_STATE_ABBREVIATIONS.get(last.upper(), last) or None
 
 
 def reverse_geocode(lat: float, lon: float) -> str | None:

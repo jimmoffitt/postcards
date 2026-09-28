@@ -41,9 +41,12 @@ from 8 to 22.
 | Post at 08:00 12:00 16:00 20:00 | `"interval_hours": 4` |
 | Post twice a day at 09:00 and 17:00 | `"window_start": 9, "window_end": 18, "interval_hours": 8` |
 | Post once a day at noon | `"window_start": 12, "window_end": 13, "interval_hours": 24` |
-| Prefer photos from this time of year | nothing; `"order": "seasonal"` is the default (±21 days, any year) |
-| Loosen / tighten "this time of year" | `"season_days": 45` / `"season_days": 10` |
+| Post photos taken on today's date (any year) first, else random | nothing; `"order": "on_this_day"` is the default |
+| Prefer photos from this time of year | `"order": "seasonal"` (±21 days, any year) |
+| Loosen / tighten "this time of year" | `"season_days": 45` / `"season_days": 10` (with `seasonal`) |
 | Ignore dates, pick at random | `"order": "random"` |
+| Don't repeat a state/country for 3 posts | `"region_cooldown": 3` (default 2; `0` turns it off) |
+| Post a particular photo next | curate app: set its status to **Up next** (moves it to `up-next/`), then sync |
 | Change the "Photo taken 2020-09-13" line | `"date_format": "Taken %B %Y"` → `Taken September 2020`; `null` to leave it off |
 
 Posts go out at `window_start`, then every `interval_hours` until `window_end`.
