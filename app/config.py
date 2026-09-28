@@ -8,15 +8,15 @@ feeds.json is the one place a photo stream is defined:
 Each feed's settings = built-in DEFAULTS, then the file's "defaults", then
 the feed's own entry.
 
-Which photo: with "order": "on_this_day" (the default), a photo taken on
-today's month and day, in any year, goes first; otherwise the pick is
-random. With "seasonal", photos taken within season_days of today's
-calendar date come first, chosen at random among themselves; with none
-that close, the window widens in season_days steps. "random" ignores
-dates. In every order, a photo from the
-same region (state/country) as any of the feed's last region_cooldown posts
-waits while photos from elsewhere are left, and anything in up-next/ goes
-before everything in curated/.
+Which photo: anything in up-next/ goes before everything in curated/.
+Then, in every order, a photo from the same region (state/country) as any
+of the feed's last region_cooldown posts waits while photos from elsewhere
+are left. Among the rest: with "order": "on_this_day" (the default), a
+photo taken on today's month and day, in any year, goes first; otherwise
+the pick is random. With "seasonal", photos taken within season_days of
+today's calendar date come first, chosen at random among themselves; with
+none that close, the window widens in season_days steps. "random" ignores
+dates.
 
 Posts go out at fixed local times: window_start, then every interval_hours
 while before window_end -- with the built-in defaults (8-22, 6h) that's

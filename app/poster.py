@@ -4,8 +4,9 @@
 One process, one thread per enabled feed in feeds.json, each posting at
 fixed local times (config.slot_times -- by default 08:00, 14:00, 20:00).
 At each slot, its worker picks a photo -- from up-next/ if there are any,
-else from curated/; one taken on today's date in an earlier year if there is
-one, else not from the region of the feed's last few posts (see order_candidates) -- posts it (alt text from
+else from curated/; not from the region of the feed's last few posts, and
+among those, one taken on today's date in an earlier year if there is one
+(see order_candidates) -- posts it (alt text from
 metadata_<Account>.json, post text from compose_message: caption + feed
 hashtags + place hashtags), and moves the file into posted/.
 
@@ -262,10 +263,10 @@ def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today
                      recent: list[str] = (), up_next: set[str] = frozenset()) -> list[str]:
     """Candidates in the order to try them, sorted on these keys in turn:
     1. up-next/ photos before curated/ ones;
-    2. "on_this_day": photos taken on today's month and day (any year) first;
-    3. photos from a region in `recent` (the regions of the last few posts)
+    2. photos from a region in `recent` (the regions of the last few posts)
        after those from anywhere else, including photos with no place;
-    4. "seasonal": taken within season_days of today's date (any year)
+    3. "on_this_day": photos taken on today's month and day (any year) first;
+       "seasonal": taken within season_days of today's date (any year)
        first, then within 2x season_days, and so on; undated photos last.
     Random among photos that tie on all of them."""
     order, window = feed_cfg["order"], feed_cfg["season_days"]
@@ -275,8 +276,8 @@ def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today
         d = season_distance(entries[filename].get("date_taken"), today)
         on_this_day = order == "on_this_day" and d == 0
         band = 0 if order != "seasonal" else 10_000 if d is None else max(0, -(-d // window) - 1)  # ceil(d/window)-1
-        return (filename not in up_next, not on_this_day,
-                md.region(entries[filename].get("place")) in recent, band)
+        return (filename not in up_next, md.region(entries[filename].get("place")) in recent,
+                not on_this_day, band)
 
     return sorted(random.sample(candidates, len(candidates)), key=key)  # stable, so ties stay shuffled
 
@@ -321,7 +322,7 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
                 "" if distance is None else f", {distance} days from today's date",
                 region or "no known region",
                 f" -- repeats a recent region ({', '.join(dict.fromkeys(recent))}): nothing else was left"
-                if region in recent and filename not in up_next and distance != 0 else "",
+                if region in recent and filename not in up_next else "",
                 queued, len(image.data), image.method)
 
     if not meta.get("alt_text"):
@@ -456,7 +457,7 @@ def check(accounts: list[str], feeds: dict) -> bool:
             today = datetime.datetime.now(cfg["tz"]).date()
             on_day = sum(1 for f in candidates if season_distance(entries[f].get("date_taken"), today) == 0)
             print(f"   order: on_this_day -- {on_day} photos taken on {today:%b %d} in an earlier year "
-                  f"(posted first); otherwise random")
+                  f"(first, unless their region is waiting); otherwise random")
         else:
             print("   order: random")
         recent = recent_regions(account, entries, cfg["region_cooldown"])

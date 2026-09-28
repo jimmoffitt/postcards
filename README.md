@@ -133,15 +133,15 @@ through daylight-saving changes.
 **Which photo.** Each slot picks from these, in turn:
 
 1. **Up next.** Anything in `up-next/` goes before everything in `curated/`.
-2. **On this day.** With `"order": "on_this_day"` (the default), a photo taken on today's month and
-   day, in any earlier year, goes first.
-3. **A different region.** A photo's region is the last part of its place, its state or country:
+2. **A different region.** A photo's region is the last part of its place, its state or country:
    "Near San Luis Obispo, CA" and "Big Sur, CA" are both California. A photo from the same region
-   as any of the feed's last `region_cooldown` posts waits while photos from elsewhere are queued.
-   Photos with no place are never held back. An on-this-day photo ignores this rule.
+   as any of the feed's last `region_cooldown` posts waits while photos from elsewhere are queued,
+   even if it was taken on today's date. Photos with no place are never held back.
+3. **On this day.** With `"order": "on_this_day"` (the default), a photo taken on today's month and
+   day, in any earlier year, goes first.
 4. Otherwise, **random**.
 
-With `"order": "seasonal"`, step 2 is skipped and, after step 3, photos taken within `season_days`
+With `"order": "seasonal"`, step 3 is replaced: photos taken within `season_days`
 of today's calendar date (any year) come first, widening in `season_days` steps; undated photos go
 last. With `"order": "random"`, dates are ignored. The date comes from the photo's EXIF capture
 time (`date_taken` in the metadata). `--check` shows how many queued photos match today's date, the
