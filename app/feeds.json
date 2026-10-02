@@ -1,7 +1,10 @@
 {
   "defaults": {
     "timezone": "America/Denver",
-    "hashtags": ["#Postcards", "#Photography"]
+    "hashtags": ["#Postcards", "#Photography"],
+    "window_start": 9,
+    "window_end": 18,
+    "interval_hours": 8
   },
   "feeds": {
     "PostcardsFromHome": {
