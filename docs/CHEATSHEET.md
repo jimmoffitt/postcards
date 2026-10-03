@@ -5,6 +5,7 @@ Examples assume the Pi's hostname is `pi`, its user is `jim`, and the repo is at
 `~/projects/postcards`. Adjust for your setup.
 
 - [Configuring streams](#configuring-streams)
+- [Curating and syncing](#curating-and-syncing)
 - [Connecting to the Pi](#connecting-to-the-pi)
 - [Finding the Pi's IP address](#finding-the-pis-ip-address)
 - [Services (systemd)](#services-systemd)
@@ -77,6 +78,49 @@ Photo taken 2020-09-13
 **Typos are safe.** An invalid `feeds.json` (unknown key, bad time zone, bad value) is rejected
 with a clear message, and the running poster keeps its previous settings. Check before syncing:
 `app/.venv/bin/python3 app/poster.py --check`.
+
+---
+
+## Curating and syncing
+
+You curate on the laptop, and the Pi posts. `app/sync_to_pi.sh` moves work in both directions, so
+the routine is **sync, curate, sync**:
+
+```sh
+~/projects/postcards/app/sync_to_pi.sh                       # 1. pull back what the Pi has posted
+cd ~/projects/postcards/app && .venv/bin/python3 curate.py   # 2. curate at http://127.0.0.1:5001 (Ctrl+C to stop)
+~/projects/postcards/app/sync_to_pi.sh                       # 3. send your changes to the Pi
+```
+
+1. **Sync first.** Photos the Pi has posted since your last sync move into `posted/` on the laptop.
+   That keeps the curate app and its "days remain" banner accurate, and you won't re-curate
+   something that already went out.
+2. **Curate.** For each photo, check the alt text and place, then set its status: **Curated** joins
+   the queue, and **Up next** goes out before anything in Curated. The **Post preview** shows the exact
+   post. When the banner's "days remain" gets low, it's time for another session.
+3. **Sync again.** Newly curated and up-next photos join the Pi's queue. Anything you un-curate or
+   delete leaves it, and your alt-text, caption and place edits go over too. The poster uses them at
+   its next slot, with no restart. The Pi keeps a dated copy of every metadata version it replaces
+   in `.metadata-backups/`.
+
+**When to commit before syncing:**
+
+| You changed… | Before syncing |
+|---|---|
+| Photos, alt text, captions, places (in the curate app) | nothing; just sync (these aren't in git) |
+| `feeds.json` or `location_tags.json` | commit; the sync refuses uncommitted changes |
+| Code | commit, then `sync_to_pi.sh --restart` |
+
+**Good to know:**
+
+- **Sync any time.** Even if the Pi posts a photo mid-sync, it won't be posted twice, and the next
+  sync tidies up.
+- **The laptop is in charge.** Don't curate or edit files on the Pi: the next sync overwrites them.
+  The Pi only posts and reports back what it posted.
+- **Preview a sync** with `sync_to_pi.sh --dry-run`.
+- **Back up the laptop** (Time Machine or similar). Your alt text and captions live in
+  `metadata_*.json`, which isn't in git. The Pi's copy is the only other one.
+- **See what posted:** `ssh pi 'journalctl -u postcards-poster --since today -o cat'`.
 
 ---
 
