@@ -61,6 +61,28 @@
   .preview { white-space: pre-wrap; background: #1b1e23; border: 1px dashed #383c44; border-radius: 6px; padding: 8px 10px; font-size: 13px; color: #bbb; }
   .preview .count { padding: 0; margin-top: 4px; font-size: 11px; }
   .status { font-size: 12px; color: #7c7; margin-left: auto; }
+  .list-item input[type=checkbox] { flex-shrink: 0; margin: 0; accent-color: #2563eb; }
+  .list-item .check-spacer { width: 13px; flex-shrink: 0; }
+  .list-item .mini { width: 40px; height: 40px; flex-shrink: 0; }
+  .list-item.group .tag { color: #a9a0f0; }
+  .group-bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #2a2d34; font-size: 12px; color: #aaa; }
+  .group-bar button { padding: 5px 10px; font-size: 12px; }
+  .group-bar[hidden] { display: none; }
+
+  /* Photos laid out the way Bluesky shows a multi-image post */
+  .mosaic { display: grid; gap: 3px; border-radius: 8px; overflow: hidden; background: #000; }
+  .mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; min-height: 0; }
+  .mosaic.n2 { grid-template-columns: 1fr 1fr; aspect-ratio: 2 / 1; }
+  .mosaic.n3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; aspect-ratio: 3 / 2; }
+  .mosaic.n3 img:first-child { grid-row: 1 / 3; }
+  .mosaic.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; aspect-ratio: 3 / 2; }
+  .mosaic.mini { gap: 1px; border-radius: 4px; aspect-ratio: auto; }
+  .group-photo { display: flex; gap: 12px; align-items: flex-start; padding: 10px; background: #1b1e23; border: 1px solid #2a2d34; border-radius: 8px; }
+  .group-photo > img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; background: #000; flex-shrink: 0; }
+  .group-photo .field { flex: 1; }
+  .group-photo .field label { text-transform: none; font-family: monospace; }
+  .group-photo .actions { display: flex; gap: 6px; margin-top: 6px; }
+  .group-photo .actions button { padding: 4px 9px; font-size: 12px; }
   .empty { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; }
 </style>
 </head>
@@ -116,6 +138,11 @@
       </div>
     </div>
     <div class="count" id="count"></div>
+    <div class="group-bar" id="groupBar" hidden>
+      <span id="groupBarText"></span>
+      <button id="btnGroup">Group</button>
+      <button class="secondary" id="btnClearChecks">Clear</button>
+    </div>
     <div class="list" id="list"></div>
   </div>
 
@@ -130,6 +157,15 @@ let selectedIndex = -1;
 let currentAccount = null;
 let placeOptions = [];
 let allAccounts = [];
+let checked = [];  // filenames ticked for grouping, in the order ticked
+const MAX_GROUP = 4;
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const imgUrl = (filename) => `/api/photos/${currentAccount}/${encodeURIComponent(filename)}/image`;
+const mosaic = (filenames, cls = '') =>
+  `<div class="mosaic n${filenames.length} ${cls}">${filenames.map(f => `<img src="${imgUrl(f)}" loading="lazy">`).join('')}</div>`;
+// The photo whose status stands for the whole item (a group's photos share one).
+const itemFilename = (p) => p.kind === 'group' ? p.photos[0].filename : p.filename;
 
 const $ = (id) => document.getElementById(id);
 
@@ -194,6 +230,7 @@ async function loadPhotos() {
   }
 
   photos = await resp.json();
+  checked = [];
   loadStreamInfo();
   selectedIndex = photos.length ? 0 : -1;
   renderList();
@@ -201,12 +238,24 @@ async function loadPhotos() {
 }
 
 function renderList() {
-  $('count').textContent = `${photos.length} photo(s)`;
-  $('list').innerHTML = photos.map((p, i) => `
-    <div class="list-item ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
-      <img src="/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/image" loading="lazy">
+  const groupCount = photos.filter(p => p.kind === 'group').length;
+  $('count').textContent = `${photos.length} item(s)` + (groupCount ? `, ${groupCount} of them group(s)` : '');
+  const upNextBadge = (p) => p.status === 'up-next' && $('status').value !== 'up-next' ? '<span class="badge">UP NEXT</span>' : '';
+  $('list').innerHTML = photos.map((p, i) => p.kind === 'group' ? `
+    <div class="list-item group ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
+      <span class="check-spacer"></span>
+      ${mosaic(p.photos.map(x => x.filename), 'mini')}
       <div class="info">
-        <div class="fname">${p.filename}${p.status === 'up-next' && $('status').value !== 'up-next' ? '<span class="badge">UP NEXT</span>' : ''}</div>
+        <div class="fname">Group of ${p.photos.length}${upNextBadge(p)}</div>
+        <div class="tag">${esc(p.message || p.place || p.photos.map(x => x.filename).join(', '))}</div>
+      </div>
+    </div>` : `
+    <div class="list-item ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
+      ${p.status === 'posted' ? '<span class="check-spacer"></span>'
+        : `<input type="checkbox" title="Tick 2\u20134 photos, then Group" data-file="${esc(p.filename)}" ${checked.includes(p.filename) ? 'checked' : ''}>`}
+      <img src="${imgUrl(p.filename)}" loading="lazy">
+      <div class="info">
+        <div class="fname">${p.filename}${upNextBadge(p)}</div>
         <div class="tag">${p.place || (p.alt_text ? '' : 'needs alt text')}</div>
       </div>
     </div>
@@ -214,6 +263,37 @@ function renderList() {
   [...document.querySelectorAll('.list-item')].forEach(el => {
     el.addEventListener('click', () => { selectedIndex = parseInt(el.dataset.idx); renderList(); renderEditor(); });
   });
+  [...document.querySelectorAll('.list-item input[type=checkbox]')].forEach(cb => {
+    cb.addEventListener('click', (e) => {
+      e.stopPropagation();  // ticking doesn't open the photo
+      const f = cb.dataset.file;
+      checked = cb.checked ? [...checked, f] : checked.filter(x => x !== f);
+      renderGroupBar();
+    });
+  });
+  renderGroupBar();
+}
+
+function renderGroupBar() {
+  const n = checked.length;
+  $('groupBar').hidden = n === 0;
+  $('groupBarText').textContent = n > MAX_GROUP ? `${n} ticked \u2014 a post holds at most ${MAX_GROUP}`
+    : n < 2 ? `${n} ticked \u2014 tick 2\u2013${MAX_GROUP} to group` : `${n} photos ticked`;
+  $('btnGroup').disabled = n < 2 || n > MAX_GROUP;
+}
+
+async function createGroup() {
+  if (photos[selectedIndex]) await save();  // keep unsaved edits to the open item
+  const statuses = new Set(checked.map(f => photos.find(p => p.filename === f)?.status));
+  const resp = await fetch(`/api/groups/${currentAccount}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({photos: checked})
+  });
+  if (!resp.ok) { alert(`Couldn\u2019t group: ${await resp.text().catch(() => resp.statusText)}`); return; }
+  const group = await resp.json();
+  if (statuses.size > 1) alert('These photos had different statuses, so the group was put in the Holding pen.');
+  await loadPhotos();
+  const idx = photos.findIndex(p => p.kind === 'group' && p.id === group.id);
+  if (idx >= 0) { selectedIndex = idx; renderList(); renderEditor(); }
 }
 
 function renderEditor() {
@@ -223,6 +303,7 @@ function renderEditor() {
     return;
   }
   const p = photos[selectedIndex];
+  if (p.kind === 'group') { renderGroupEditor(p); return; }
   editor.innerHTML = `
     <div class="editor-top">
       <div class="editor-image">
@@ -300,6 +381,134 @@ function renderEditor() {
   });
 }
 
+function statusSwitch(p) {
+  return p.status === 'posted' ? '<div class="status-note">Posted</div>' : `
+    <div class="status-switch">
+      ${STATUS_CHOICES.map(([s, label]) =>
+        `<button class="${p.status === s ? 'on' : ''}" data-status="${s}">${label}</button>`).join('')}
+    </div>
+    <div class="status-note">${STATUS_NOTES[p.status] || ''}</div>`;
+}
+
+function renderGroupEditor(g) {
+  const posted = g.status === 'posted';
+  const n = g.photos.length;
+  $('editor').innerHTML = `
+    <div class="editor-top">
+      <div class="editor-image">
+        ${mosaic(g.photos.map(x => x.filename))}
+        <div class="meta-line" style="margin-top:8px">Group of ${n} &middot; posted together as one post &middot; ${g.date_taken || 'no date'} &middot; ${g.status}</div>
+      </div>
+      <div class="editor-fields">
+        <div>${statusSwitch(g)}${posted ? '' : '<div class="status-note">Status applies to every photo in the group.</div>'}</div>
+        <div class="field">
+          <label>Message for the post</label>
+          <textarea id="f_msg" placeholder="One message for all ${n} photos; feed and location hashtags are added automatically" ${posted ? 'disabled' : ''}>${esc(g.message)}</textarea>
+        </div>
+        <div class="field">
+          <label>Place (for the location hashtags)</label>
+          <input id="f_place" type="text" autocomplete="off" list="placeOptions" value="${esc(g.place)}" ${posted ? 'disabled' : ''}>
+          <datalist id="placeOptions">${placeOptions.map(o => `<option value="${esc(o)}">`).join('')}</datalist>
+        </div>
+        <div class="field">
+          <label>Post preview</label>
+          <div class="preview" id="f_preview"></div>
+        </div>
+        <label style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.04em">Photos, in posting order, each with its own alt text</label>
+        ${g.photos.map((x, i) => `
+          <div class="group-photo">
+            <img src="${imgUrl(x.filename)}">
+            <div class="field">
+              <label>${x.filename} &middot; ${x.date_taken || 'no date'}</label>
+              <textarea class="f_group_alt" data-file="${esc(x.filename)}" ${posted ? 'disabled' : ''}>${esc(x.alt_text)}</textarea>
+              ${posted ? '' : `<div class="actions">
+                <button class="secondary" data-move="${i}" data-by="-1" ${i === 0 ? 'disabled' : ''}>&larr; Earlier</button>
+                <button class="secondary" data-move="${i}" data-by="1" ${i === n - 1 ? 'disabled' : ''}>Later &rarr;</button>
+                <button class="secondary" data-remove="${i}">Remove from group</button>
+              </div>`}
+            </div>
+          </div>`).join('')}
+        ${posted ? '' : `<div class="row">
+          <button id="btnSave">Save</button>
+          <span class="status" id="saveStatus"></span>
+        </div>`}
+      </div>
+    </div>
+    <div class="toolbar">
+      <button class="secondary" id="btnPrev">&larr; Prev</button>
+      <button class="secondary" id="btnNext">Next &rarr;</button>
+      ${posted ? '' : '<button class="danger" id="btnUngroup">Ungroup</button>'}
+    </div>
+  `;
+  $('btnPrev').onclick = () => { if (selectedIndex > 0) { selectedIndex--; renderList(); renderEditor(); } };
+  $('btnNext').onclick = () => { if (selectedIndex < photos.length - 1) { selectedIndex++; renderList(); renderEditor(); } };
+  renderPreview(g);
+  if (posted) return;
+  $('btnSave').onclick = save;
+  $('f_place').addEventListener('change', save);
+  [...document.querySelectorAll('.status-switch button')].forEach(btn => {
+    btn.onclick = () => { if (btn.dataset.status !== g.status) setStatus(btn.dataset.status); };
+  });
+  [...document.querySelectorAll('[data-move]')].forEach(btn => {
+    btn.onclick = () => {
+      const files = g.photos.map(x => x.filename), i = +btn.dataset.move, j = i + +btn.dataset.by;
+      [files[i], files[j]] = [files[j], files[i]];
+      updateGroupPhotos(g, files);
+    };
+  });
+  [...document.querySelectorAll('[data-remove]')].forEach(btn => {
+    btn.onclick = () => {
+      const files = g.photos.map(x => x.filename).filter((_, i) => i !== +btn.dataset.remove);
+      if (files.length < 2 && !confirm('That leaves one photo, so the group will be ungrouped. Continue?')) return;
+      updateGroupPhotos(g, files);
+    };
+  });
+  $('btnUngroup').onclick = async () => {
+    if (!confirm(`Ungroup these ${n} photos? They become separate posts again; nothing is deleted.`)) return;
+    await save();
+    await fetch(`/api/groups/${currentAccount}/${g.id}`, {method: 'DELETE'});
+    await loadPhotos();
+  };
+}
+
+async function updateGroupPhotos(g, files) {
+  await save();
+  const resp = await fetch(`/api/groups/${currentAccount}/${g.id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({photos: files})
+  });
+  if (!resp.ok) { alert(`Couldn\u2019t change the group: ${await resp.text().catch(() => resp.statusText)}`); return; }
+  const updated = await resp.json();
+  if (updated.dissolved) { await loadPhotos(); return; }
+  photos[selectedIndex] = updated;
+  renderList();
+  renderEditor();
+}
+
+async function saveGroup() {
+  const g = photos[selectedIndex];
+  if (g.status === 'posted') return;
+  // Each photo's alt text, then the group's message and place.
+  for (const ta of document.querySelectorAll('.f_group_alt')) {
+    const x = g.photos.find(x => x.filename === ta.dataset.file);
+    if (x && ta.value !== (x.alt_text || '')) {
+      await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(x.filename)}`, {
+        method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({alt_text: ta.value})
+      });
+      x.alt_text = ta.value;
+    }
+  }
+  const body = {message: $('f_msg').value, place: $('f_place').value};
+  const updated = await fetch(`/api/groups/${currentAccount}/${g.id}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  }).then(r => r.json());
+  Object.assign(g, updated);
+  renderPreview(g);
+  if (body.place && !placeOptions.includes(body.place)) placeOptions.push(body.place);
+  $('saveStatus').textContent = 'Saved';
+  setTimeout(() => { const s = $('saveStatus'); if (s) s.textContent = ''; }, 1500);
+  renderList();
+}
+
 function renderPreview(p) {
   const text = p.post_preview || '';
   $('f_preview').textContent = text;
@@ -353,7 +562,7 @@ const STATUS_NOTES = {
 async function setStatus(newStatus) {
   await save(); // persist any unsaved edits before the file moves
   const p = photos[selectedIndex];
-  const resp = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(p.filename)}/status`, {
+  const resp = await fetch(`/api/photos/${currentAccount}/${encodeURIComponent(itemFilename(p))}/status`, {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({status: newStatus})
   });
   if (!resp.ok) {
@@ -361,6 +570,7 @@ async function setStatus(newStatus) {
     return;
   }
   p.status = (await resp.json()).status;
+  if (p.kind === 'group') p.photos.forEach(x => { x.status = p.status; });
 
   const currentFilter = $('status').value;
   if (currentFilter !== 'all' && currentFilter !== p.status) {
@@ -374,6 +584,7 @@ async function setStatus(newStatus) {
 
 async function save() {
   const p = photos[selectedIndex];
+  if (p.kind === 'group') return saveGroup();
   const body = {
     alt_text: $('f_alt').value,
     message: $('f_msg').value,
@@ -403,6 +614,8 @@ async function geocode() {
 ['account', 'status', 'q', 'hasGeo', 'hasAlt', 'dateFrom', 'dateTo'].forEach(id => {
   $(id).addEventListener('change', loadPhotos);
 });
+$('btnGroup').addEventListener('click', createGroup);
+$('btnClearChecks').addEventListener('click', () => { checked = []; renderList(); });
 $('q').addEventListener('keyup', (e) => { if (e.key === 'Enter') loadPhotos(); });
 
 $('btnSyncLocations').addEventListener('click', async () => {

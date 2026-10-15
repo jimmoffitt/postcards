@@ -22,6 +22,7 @@ photos/
 # Photo metadata and geocoding results hold GPS positions / street addresses:
 # kept out of git (sync_to_pi.sh copies metadata to the Pi directly).
 metadata_*.json
+groups_*.json
 geocode_cache.json
 .metadata-backups/
 # ...except the sample set, which has no GPS (see samples/README.md).

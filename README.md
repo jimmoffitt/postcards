@@ -218,6 +218,16 @@ For each photo you can:
 The **Post preview** shows exactly what will be posted. **Sync locations → alt text** appends the
 place name to alt text that doesn't mention it yet.
 
+**Groups: several photos in one post.** Tick 2 to 4 photos in the list and click **Group**. They
+then go out together as one Bluesky post, laid out the way Bluesky shows multi-image posts. A
+group has one **message** and one **place** (for the location hashtags) for the whole post, and
+each photo keeps its own alt text. The post's date line uses the earliest photo's date. Its
+status applies to all its photos at once; photos with different statuses go to the holding pen
+when grouped. Use **Earlier** / **Later** to set the order, **Remove from group** to drop one, or
+**Ungroup** to make them separate posts again. A group counts as one post in "days remain", in
+the schedule, and in the region rule. Groups are saved in `groups_<Feed>.json` next to the
+metadata, which `sync_to_pi.sh` copies to the Pi too.
+
 Changes are saved to `metadata_<Feed>.json`. These files hold GPS positions, so they're kept out of
 git. `sync_to_pi.sh` copies them to the Pi, and the Pi keeps a dated copy of every version it
 replaces in `.metadata-backups/`. Back up your laptop's copies too (Time Machine or similar): they

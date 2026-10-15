@@ -48,6 +48,7 @@ from 8 to 22.
 | Ignore dates, pick at random | `"order": "random"` |
 | Don't repeat a state/country for 3 posts | `"region_cooldown": 3` (default 2; `0` turns it off) |
 | Post a particular photo next | curate app: set its status to **Up next** (moves it to `up-next/`), then sync |
+| Post 2–4 photos together in one post | curate app: tick them in the list, click **Group**, write the group's message |
 | Change the "Photo taken 2020-09-13" line | `"date_format": "Taken %B %Y"` → `Taken September 2020`; `null` to leave it off |
 
 Posts go out at `window_start`, then every `interval_hours` until `window_end`.

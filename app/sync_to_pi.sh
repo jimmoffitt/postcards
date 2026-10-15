@@ -9,7 +9,8 @@
 #      checkout updates in place). The first run creates that repo. Refuses
 #      to run with uncommitted changes, so the Pi only ever runs committed
 #      code. Then copy the photo metadata (metadata_<Feed>.json -- not in
-#      git, since it holds GPS positions); the Pi keeps a dated copy of any
+#      git, since it holds GPS positions) and photo groups (groups_<Feed>.json);
+#      the Pi keeps a dated copy of any
 #      version it replaces in .metadata-backups/.
 #   3. Mirror the Mac's holding-pen/, curated/ and up-next/ onto the Pi (the Mac is the
 #      source of truth for curation decisions, including deletes). posted/ is
@@ -115,6 +116,10 @@ for feed in $FEEDS; do
     metadata_files+=("$ROOT/metadata_$feed.json")
   else
     echo "  warning: no metadata_$feed.json -- the Pi can't post $feed photos without it" >&2
+  fi
+  # Photo groups (posted together); only exists once a group has been made.
+  if [[ -f "$ROOT/groups_$feed.json" ]]; then
+    metadata_files+=("$ROOT/groups_$feed.json")
   fi
 done
 if (( ${#metadata_files[@]} )); then

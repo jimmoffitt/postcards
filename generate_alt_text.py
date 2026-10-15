@@ -29,6 +29,7 @@ import argparse
 import base64
 import io
 import json
+import os
 import time
 import urllib.parse
 import urllib.request
@@ -148,6 +149,13 @@ def build_request(custom_id: str, image_b64: str, place: str | None, model: str)
     )
 
 
+def make_client() -> anthropic.Anthropic:
+    """An API client. A key that isn't scoped to a workspace has to name one
+    on every request: set ANTHROPIC_WORKSPACE_ID (e.g. in app/.local.env)."""
+    workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+    return anthropic.Anthropic(default_headers={"anthropic-workspace-id": workspace} if workspace else None)
+
+
 def run_batch(client: anthropic.Anthropic, requests: list) -> dict:
     batch = client.messages.batches.create(requests=requests)
     print(f"    batch {batch.id}: {len(requests)} requests submitted, waiting...")
@@ -190,7 +198,7 @@ def main():
         files = sorted(p for p in src_root.rglob("*.jpg") if "original zips" not in p.parts)
     print(f"Found {len(files)} photos under {src_root}")
 
-    client = anthropic.Anthropic()
+    client = make_client()
 
     id_map = {}
     chunks = [[]]

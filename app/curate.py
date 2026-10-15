@@ -12,6 +12,7 @@ metadata_<Account>.json at the project root via metadata.py.
 from __future__ import annotations
 
 import os
+import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file, abort
@@ -53,6 +54,11 @@ def _describe_interval(hours: float) -> str:
     return "hour" if minutes == 60 else f"{minutes // 60} hours"
 
 
+def _count_posts(filenames: list[str], groups: dict) -> int:
+    """How many posts these photos make: a group's photos are one post."""
+    return len({md.group_of(groups, f) or f for f in filenames})
+
+
 @app.get("/api/stream/<account>")
 def api_stream(account):
     """The feed's posting schedule (from feeds.json, read fresh) and how many
@@ -62,8 +68,10 @@ def api_stream(account):
     cfg = config.load_feeds()[account]
     slots = config.slot_times(cfg)
     per_day = len(slots)
-    up_next = len(md.scan_up_next(account))
-    curated, holding = up_next + len(md.scan_curated(account)), len(md.scan_holding(account))
+    groups = md.load_groups(account)
+    up_next = _count_posts(md.scan_up_next(account), groups)
+    curated = up_next + _count_posts(md.scan_curated(account), groups)
+    holding = _count_posts(md.scan_holding(account), groups)
     every = _describe_interval(cfg["interval_hours"])
     if cfg["window_enabled"]:
         when = f"every {every} between {cfg['window_start']:02d}:00 and {cfg['window_end']:02d}:00"
@@ -116,6 +124,7 @@ def api_list_photos(account):
     date_to = request.args.get("date_to", "")
 
     entries = md.load_metadata(account)
+    groups = md.load_groups(account)
     feeds = config.load_feeds()
     location_tags = md.load_location_tags()
     by_status = {
@@ -132,7 +141,19 @@ def api_list_photos(account):
     else:
         abort(400, f"unknown status {status!r}")
 
-    results = []
+    def photo_item(filename):
+        meta = entries.get(filename, {})
+        return {
+            "kind": "photo",
+            "filename": filename,
+            "status": candidates[filename],
+            **{k: meta.get(k) for k in ("alt_text", "message", "lat", "lon", "place", "date_taken")},
+            "post_preview": _preview(account, meta, feeds, location_tags),
+        }
+
+    # A group is listed once, where its first matching photo would be, if
+    # any of its photos matches the filters.
+    results, listed_groups = [], set()
     for filename in sorted(candidates):
         meta = entries.get(filename, {})
         if q and q not in filename.lower() and q not in (meta.get("alt_text") or "").lower():
@@ -150,13 +171,107 @@ def api_list_photos(account):
             continue
         if date_to and date_taken and date_taken > date_to:
             continue
-        results.append({
-            "filename": filename,
-            "status": candidates[filename],
-            **{k: meta.get(k) for k in ("alt_text", "message", "lat", "lon", "place", "date_taken")},
-            "post_preview": _preview(account, meta, feeds, location_tags),
-        })
+        gid = md.group_of(groups, filename)
+        if gid is None:
+            results.append(photo_item(filename))
+        elif gid not in listed_groups:
+            listed_groups.add(gid)
+            results.append(_group_item(account, gid, groups, entries, feeds, location_tags))
     return jsonify(results)
+
+
+def _group_item(account, gid, groups, entries, feeds=None, location_tags=None) -> dict:
+    group = groups[gid]
+    photos = []
+    for f in group["photos"]:
+        _path, status = md.find_photo(account, f)
+        meta = entries.get(f, {})
+        photos.append({"filename": f, "status": status,
+                       **{k: meta.get(k) for k in ("alt_text", "place", "date_taken")}})
+    entry = md.group_entry(group, entries)
+    return {
+        "kind": "group",
+        "id": gid,
+        "status": photos[0]["status"],
+        "photos": photos,
+        "message": group.get("message") or "",
+        "place": group.get("place") or "",
+        "date_taken": entry["date_taken"],
+        "post_preview": _preview(account, entry, feeds, location_tags),
+    }
+
+
+@app.post("/api/groups/<account>")
+def api_create_group(account):
+    """Group 2-4 unposted, ungrouped photos into one post. They keep their
+    status if they share one; otherwise they all go to the holding pen. The
+    group starts with the first message and place set on any of them."""
+    if account not in md.ACCOUNTS:
+        abort(404)
+    filenames = request.get_json(force=True).get("photos") or []
+    if not (md.MIN_GROUP_PHOTOS <= len(filenames) <= md.MAX_GROUP_PHOTOS) or len(set(filenames)) != len(filenames):
+        abort(400, f"a group needs {md.MIN_GROUP_PHOTOS} to {md.MAX_GROUP_PHOTOS} different photos")
+    groups = md.load_groups(account)
+    statuses = set()
+    for f in filenames:
+        _path, status = md.find_photo(account, f)
+        if status is None:
+            abort(404, f"{f} not found")
+        if status == md.POSTED_SUBDIR:
+            abort(400, f"{f} was already posted")
+        if md.group_of(groups, f):
+            abort(409, f"{f} is already in a group -- ungroup it first")
+        statuses.add(status)
+    if len(statuses) > 1:
+        for f in filenames:
+            md.move_photo(account, f, md.HOLDING_SUBDIR)
+
+    entries = md.load_metadata(account)
+    first = lambda key: next((entries.get(f, {}).get(key) for f in filenames if entries.get(f, {}).get(key)), "")
+    gid = f"g-{uuid.uuid4().hex[:8]}"
+    groups[gid] = {"photos": filenames, "message": first("message"), "place": first("place")}
+    md.save_groups(account, groups)
+    return jsonify(_group_item(account, gid, groups, entries))
+
+
+@app.put("/api/groups/<account>/<gid>")
+def api_update_group(account, gid):
+    """Edit a group's message and place, or reorder or drop its photos
+    ("photos": a reordering of some of its current photos). Left with fewer
+    than 2 photos, the group is dissolved."""
+    if account not in md.ACCOUNTS:
+        abort(404)
+    groups = md.load_groups(account)
+    group = groups.get(gid)
+    if group is None:
+        abort(404)
+    body = request.get_json(force=True)
+    for key in ("message", "place"):
+        if key in body:
+            group[key] = body[key] or ""
+    if "photos" in body:
+        photos = body["photos"]
+        if len(set(photos)) != len(photos) or not set(photos) <= set(group["photos"]):
+            abort(400, "photos must be some of the group's current photos")
+        group["photos"] = photos
+        if len(photos) < md.MIN_GROUP_PHOTOS:
+            del groups[gid]
+            md.save_groups(account, groups)
+            return jsonify({"dissolved": gid})
+    md.save_groups(account, groups)
+    return jsonify(_group_item(account, gid, groups, md.load_metadata(account)))
+
+
+@app.delete("/api/groups/<account>/<gid>")
+def api_ungroup(account, gid):
+    """Ungroup: the photos become singles again, where they are. Deletes no photos."""
+    if account not in md.ACCOUNTS:
+        abort(404)
+    groups = md.load_groups(account)
+    if groups.pop(gid, None) is None:
+        abort(404)
+    md.save_groups(account, groups)
+    return jsonify({"ungrouped": gid})
 
 
 @app.get("/api/photos/<account>/<filename>/image")
@@ -223,7 +338,8 @@ def api_update_photo(account, filename):
 @app.put("/api/photos/<account>/<filename>/status")
 def api_set_status(account, filename):
     """Move a photo between holding-pen, curated and up-next (the status
-    buttons). Moving to/from posted isn't exposed here -- that's poster.py's job."""
+    buttons), along with the rest of its group. Moving to/from posted isn't
+    exposed here -- that's poster.py's job."""
     if account not in md.ACCOUNTS:
         abort(404)
     body = request.get_json(force=True)
@@ -238,7 +354,12 @@ def api_set_status(account, filename):
     if current_status == md.POSTED_SUBDIR:
         abort(400, "already posted, can't move back to holding-pen/curated/up-next")
 
-    md.move_photo(account, filename, to_status)
+    # A group's photos move together.
+    groups = md.load_groups(account)
+    gid = md.group_of(groups, filename)
+    for f in groups[gid]["photos"] if gid else [filename]:
+        if md.find_photo(account, f)[1] not in (None, md.POSTED_SUBDIR):
+            md.move_photo(account, f, to_status)
     return jsonify({"filename": filename, "status": to_status})
 
 

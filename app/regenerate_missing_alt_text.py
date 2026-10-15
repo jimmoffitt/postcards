@@ -26,7 +26,7 @@ sys.path.insert(0, str(md.PROJECT_ROOT))
 import generate_alt_text as gat  # noqa: E402
 
 
-def find_missing(account: str) -> list[tuple[str, Path]]:
+def find_missing(account: str) -> list[tuple[str, Path, str | None]]:
     entries = md.load_metadata(account)
     missing = []
     for filename, meta in entries.items():
@@ -36,7 +36,7 @@ def find_missing(account: str) -> list[tuple[str, Path]]:
         if path is None:
             print(f"  {account}/{filename}: file missing on disk, skipping")
             continue
-        missing.append((filename, path))
+        missing.append((filename, path, meta.get("place")))
     return missing
 
 
@@ -49,11 +49,7 @@ def main():
 
     accounts = [args.account] if args.account else list(md.ACCOUNTS)
 
-    cache_path = md.PROJECT_ROOT / gat.GEOCODE_CACHE_FILE
-    cache = gat.load_cache(cache_path)
-
-    import anthropic
-    client = anthropic.Anthropic()
+    client = gat.make_client()
 
     for account in accounts:
         missing = find_missing(account)
@@ -66,18 +62,13 @@ def main():
         chunks = [[]]
         chunk_bytes = 0
 
-        for i, (filename, path) in enumerate(missing):
+        for i, (filename, path, place) in enumerate(missing):
             cid = f"img-{i:05d}"
             id_map[cid] = filename
-
-            gps = gat.extract_gps(path)
-            place = None
-            if gps:
-                lat, lon = gps
-                place = gat.reverse_geocode(lat, lon, cache, cache_path)
-                print(f"  [{i + 1}/{len(missing)}] {filename}: GPS -> {place}")
-            else:
-                print(f"  [{i + 1}/{len(missing)}] {filename}: no GPS")
+            # The photo's curated place ("Longmont, CO"), never a raw geocoder
+            # result: those carry street addresses, which mustn't end up in
+            # public alt text.
+            print(f"  [{i + 1}/{len(missing)}] {filename}: {place or 'no place'}")
 
             b64 = gat.downscale_for_vision(path)
             request = gat.build_request(cid, b64, place, args.model)

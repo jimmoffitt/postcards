@@ -7,7 +7,9 @@ At each slot, its worker picks a photo -- from up-next/ if there are any,
 else from curated/; one taken on today's date in an earlier year if there is
 one, else not from the region of the feed's last few posts (see order_candidates) -- posts it (alt text from
 metadata_<Account>.json, post text from compose_message: caption + feed
-hashtags + place hashtags), and moves the file into posted/.
+hashtags + place hashtags), and moves the file into posted/. A photo in a
+group (groups_<Account>.json) is posted together with the rest of its group,
+as one post of up to 4 images with the group's message and place.
 
 feeds.json is re-read continuously, so hashtag and schedule edits apply to
 the next post without a restart. Enabling a feed needs a restart.
@@ -78,19 +80,20 @@ def build_hashtag_facets(text: str):
     return facets
 
 
-def post_to_bluesky(handle: str, app_password: str, image: upload_prep.PreparedImage,
-                    alt_text: str, message: str) -> str:
+def post_to_bluesky(handle: str, app_password: str, images: list[upload_prep.PreparedImage],
+                    alt_texts: list[str], message: str) -> str:
     from atproto import Client, models
 
     client = Client()
     client.login(handle, app_password)
-    resp = client.send_image(
+    resp = client.send_images(
         text=message,
-        image=image.data,
-        image_alt=alt_text,
+        images=[image.data for image in images],
+        image_alts=alt_texts,
         facets=build_hashtag_facets(message),
         # Without an aspect ratio Bluesky falls back to a square crop.
-        image_aspect_ratio=models.AppBskyEmbedDefs.AspectRatio(width=image.width, height=image.height),
+        image_aspect_ratios=[models.AppBskyEmbedDefs.AspectRatio(width=image.width, height=image.height)
+                             for image in images],
     )
     return getattr(resp, "uri", "")
 
@@ -123,14 +126,15 @@ def record_post(account: str, filename: str, uri: str, when: datetime.datetime) 
         f.write(line + "\n")
 
 
-def recent_regions(account: str, entries: dict, count: int) -> list[str]:
+def recent_regions(account: str, entries: dict, groups: dict, count: int) -> list[str]:
     """Regions (see md.region) of the feed's last `count` posts, newest
-    first; posts with no place are skipped over, not counted."""
+    first; posts with no place are skipped over, not counted. A group's
+    photos share one post (one uri), so they count once."""
     if count <= 0 or not POSTED_LOG.exists():
         return []
     with _log_lock, open(POSTED_LOG) as f:
         lines = f.readlines()
-    regions = []
+    regions, seen_uris = [], set()
     for line in reversed(lines):
         try:
             rec = json.loads(line)
@@ -138,7 +142,12 @@ def recent_regions(account: str, entries: dict, count: int) -> list[str]:
             continue
         if rec.get("account") != account:
             continue
-        r = md.region(entries.get(rec.get("filename"), {}).get("place"))
+        uri = rec.get("uri")
+        if uri:
+            if uri in seen_uris:
+                continue
+            seen_uris.add(uri)
+        r = md.region(md.effective_entry(rec.get("filename"), entries, groups).get("place"))
         if r:
             regions.append(r)
             if len(regions) == count:
@@ -241,6 +250,21 @@ def queue(account: str) -> tuple[dict, list[str], set[str]]:
     return entries, candidates, up_next & set(candidates)
 
 
+def post_units(candidates: list[str], groups: dict) -> dict[str, list[str]]:
+    """The queue as posts: {first photo: [every photo in that post]}. A
+    single photo is a post of its own; a group's queued photos go together,
+    in the group's order."""
+    queued, units, taken = set(candidates), {}, set()
+    for f in candidates:
+        if f in taken:
+            continue
+        gid = md.group_of(groups, f)
+        photos = [p for p in groups[gid]["photos"] if p in queued][:md.MAX_GROUP_PHOTOS] if gid else [f]
+        taken.update(photos)
+        units[photos[0]] = photos
+    return units
+
+
 def _day_of_year(month: int, day: int) -> int:
     # A non-leap year, so Feb 29 counts as Feb 28.
     return datetime.date(2001, month, min(day, 28) if month == 2 else day).timetuple().tm_yday
@@ -283,63 +307,73 @@ def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today
 
 def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool,
               photo: str = None) -> bool:
-    """Posts one photo -- `photo` if given, else per the feed's order.
-    Returns True if something was posted."""
+    """Posts one photo, or one group -- `photo` (or its group) if given,
+    else per the feed's order. Returns True if something was posted."""
     entries, candidates, up_next = queue(account)
-    queued = len(candidates)
+    groups = md.load_groups(account)
+    units = post_units(candidates, groups)
+    queued = len(units)
     if photo:
         if photo not in candidates:
             logger.error("[%s] %s isn't an unposted photo in curated/ or up-next/ with metadata -- nothing posted", account, photo)
             return False
-        candidates = [photo]
-    if not candidates:
+        units = {first: photos for first, photos in units.items() if photo in photos}
+    if not units:
         logger.info("[%s] no curated photos ready to post -- nothing to do", account)
         return False
 
-    # Seasonal (or random) order; a photo that can't be made safe to upload
-    # (see upload_prep) is skipped in favour of the next, not posted as-is.
+    # Seasonal (or random) order; a post with a photo that can't be made safe
+    # to upload (see upload_prep) is skipped in favour of the next, not posted as-is.
     today = datetime.datetime.now(feed_cfg["tz"]).date()
-    recent = recent_regions(account, entries, feed_cfg["region_cooldown"])
-    for filename in order_candidates(candidates, entries, feed_cfg, today, recent, up_next):
+    recent = recent_regions(account, entries, groups, feed_cfg["region_cooldown"])
+    unit_entries = {first: md.effective_entry(first, entries, groups) for first in units}
+    for first in order_candidates(list(units), unit_entries, feed_cfg, today, recent, up_next):
         try:
-            image = upload_prep.prepare(md.find_photo(account, filename)[0])
+            images = [upload_prep.prepare(md.find_photo(account, f)[0]) for f in units[first]]
             break
         except Exception as exc:
-            logger.error("[%s] skipping %s: %s", account, filename, exc)
+            logger.error("[%s] skipping %s: %s", account, ", ".join(units[first]), exc)
     else:
-        logger.error("[%s] none of the %d queued photos could be prepared -- nothing posted",
-                     account, len(candidates))
+        logger.error("[%s] none of the %d queued posts could be prepared -- nothing posted",
+                     account, len(units))
         return False
 
-    meta = entries[filename]
+    photos = units[first]
+    meta = unit_entries[first]
     message = md.compose_message(meta, feed_cfg, md.load_location_tags())
     distance = season_distance(meta.get("date_taken"), today)
     region = md.region(meta.get("place"))
-    logger.info("[%s] selected %s%s, taken %s%s, in %s%s (%d queued; %d bytes, metadata stripped, %s)",
-                account, filename, " from up-next/" if filename in up_next else "",
+    what = first if len(photos) == 1 else f"a group of {len(photos)} ({', '.join(photos)})"
+    logger.info("[%s] selected %s%s, taken %s%s, in %s%s (%d queued; %s bytes, metadata stripped, %s)",
+                account, what, " from up-next/" if first in up_next else "",
                 meta.get("date_taken") or "on an unknown date",
                 "" if distance is None else f", {distance} days from today's date",
                 region or "no known region",
                 f" -- repeats a recent region ({', '.join(dict.fromkeys(recent))}): nothing else was left"
-                if region in recent and filename not in up_next and distance != 0 else "",
-                queued, len(image.data), image.method)
+                if region in recent and first not in up_next and distance != 0 else "",
+                queued, " + ".join(str(len(i.data)) for i in images), ", ".join(i.method for i in images))
 
-    if not meta.get("alt_text"):
-        logger.warning("[%s] %s has no alt_text -- posting anyway", account, filename)
+    alt_texts = [entries[f].get("alt_text", "") for f in photos]
+    for f, alt in zip(photos, alt_texts):
+        if not alt:
+            logger.warning("[%s] %s has no alt_text -- posting anyway", account, f)
 
     if dry_run:
-        logger.info("[%s] [dry-run] would post %s (%dx%d)\n  alt: %s\n  text: %s",
-                    account, filename, image.width, image.height, meta.get("alt_text", ""), message)
+        logger.info("[%s] [dry-run] would post %s\n%s\n  text: %s", account, what,
+                    "\n".join(f"  alt ({f}, {i.width}x{i.height}): {alt}"
+                              for f, i, alt in zip(photos, images, alt_texts)), message)
         return False
 
-    uri = post_to_bluesky(handle, app_password, image, meta.get("alt_text", ""), message)
+    uri = post_to_bluesky(handle, app_password, images, alt_texts, message)
     now = datetime.datetime.now(datetime.timezone.utc)
     # Log before moving: if the move fails, the log alone still stops a repost.
-    record_post(account, filename, uri, now)
-    logger.info("[%s] posted %s -> %s", account, filename, uri)
+    for f in photos:
+        record_post(account, f, uri, now)
+    logger.info("[%s] posted %s -> %s", account, what, uri)
 
-    dest = md.move_to_posted(account, filename)
-    logger.info("[%s] moved %s -> %s", account, filename, dest)
+    for f in photos:
+        dest = md.move_to_posted(account, f)
+        logger.info("[%s] moved %s -> %s", account, f, dest)
     return True
 
 
@@ -435,6 +469,9 @@ def check(accounts: list[str], feeds: dict) -> bool:
             print(f"   ✗ no folder {md.curated_dir(account)}")
             ok = False
         entries, candidates, up_next = queue(account)
+        groups = md.load_groups(account)
+        units = post_units(candidates, groups)
+        unit_entries = {first: md.effective_entry(first, entries, groups) for first in units}
         # Run every queued photo through the same prep as a real post.
         unpostable, reencoded = [], 0
         for f in candidates:
@@ -447,26 +484,29 @@ def check(accounts: list[str], feeds: dict) -> bool:
         print(f"   schedule: {describe_schedule(cfg)}")
         if cfg["order"] == "seasonal":
             today = datetime.datetime.now(cfg["tz"]).date()
-            dists = [season_distance(entries[f].get("date_taken"), today) for f in candidates]
+            dists = [season_distance(e.get("date_taken"), today) for e in unit_entries.values()]
             in_season = sum(1 for d in dists if d is not None and d <= cfg["season_days"])
             undated = sum(1 for d in dists if d is None)
-            print(f"   order: seasonal -- {in_season} photos taken within ±{cfg['season_days']} days of "
+            print(f"   order: seasonal -- {in_season} posts taken within ±{cfg['season_days']} days of "
                   f"{today:%b %d} (any year)" + (f", {undated} undated (posted last)" if undated else ""))
         elif cfg["order"] == "on_this_day":
             today = datetime.datetime.now(cfg["tz"]).date()
-            on_day = sum(1 for f in candidates if season_distance(entries[f].get("date_taken"), today) == 0)
-            print(f"   order: on_this_day -- {on_day} photos taken on {today:%b %d} in an earlier year "
+            on_day = sum(1 for e in unit_entries.values() if season_distance(e.get("date_taken"), today) == 0)
+            print(f"   order: on_this_day -- {on_day} posts taken on {today:%b %d} in an earlier year "
                   f"(posted first); otherwise random")
         else:
             print("   order: random")
-        recent = recent_regions(account, entries, cfg["region_cooldown"])
+        recent = recent_regions(account, entries, groups, cfg["region_cooldown"])
         if cfg["region_cooldown"]:
             print(f"   regions: none repeated within {cfg['region_cooldown']} posts while others are queued; "
                   f"waiting now: {', '.join(dict.fromkeys(recent)) or '(none)'}")
-            by_region = collections.Counter(md.region(entries[f].get("place")) or "(no place)" for f in candidates)
+            by_region = collections.Counter(md.region(e.get("place")) or "(no place)" for e in unit_entries.values())
             print("   queued by region: " + ", ".join(f"{r} {n}" for r, n in by_region.most_common()))
-        print(f"   queue: {len(candidates)} ready ({len(up_next)} up next, {len(candidates) - len(up_next)} curated; "
-              f"~{len(candidates) / per_day:.0f} days at {per_day}/day), {len(md.scan_posted(account))} posted")
+        up_next_posts = sum(1 for first in units if first in up_next)
+        grouped = sum(1 for photos in units.values() if len(photos) > 1)
+        print(f"   queue: {len(units)} posts ready ({up_next_posts} up next, {len(units) - up_next_posts} curated"
+              + (f"; {grouped} of them groups, {len(candidates)} photos in all" if grouped else "")
+              + f"; ~{len(units) / per_day:.0f} days at {per_day}/day), {len(md.scan_posted(account))} photos posted")
         if unpostable:
             print(f"   ✗ can't be prepared for upload (will be skipped):\n      " + "\n      ".join(unpostable))
             ok = False
@@ -476,11 +516,12 @@ def check(accounts: list[str], feeds: dict) -> bool:
         if no_alt:
             print(f"   ! no alt text: {', '.join(no_alt)}")
         print(f"   next post: {describe_next(load_state(account), cfg)}")
-        if candidates:
-            sample = order_candidates(candidates, entries, cfg, datetime.datetime.now(cfg["tz"]).date(),
+        if units:
+            sample = order_candidates(list(units), unit_entries, cfg, datetime.datetime.now(cfg["tz"]).date(),
                                       recent, up_next)[0]
-            text = md.compose_message(entries[sample], cfg, location_tags)
-            print(f"   a likely next post ({sample}, taken {entries[sample].get('date_taken') or 'undated'}):\n      "
+            text = md.compose_message(unit_entries[sample], cfg, location_tags)
+            print(f"   a likely next post ({', '.join(units[sample])}, "
+                  f"taken {unit_entries[sample].get('date_taken') or 'undated'}):\n      "
                   + text.replace("\n", "\n      "))
         print()
     print("All checks passed." if ok else "Some checks FAILED.")

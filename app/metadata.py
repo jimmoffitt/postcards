@@ -90,6 +90,66 @@ def save_metadata(account: str, data: dict) -> None:
     metadata_path(account).write_text(json.dumps(data, indent=2, sort_keys=True))
 
 
+# ---------------------------------------------------------------------------
+# Groups: 2-4 photos posted together as one Bluesky post. Kept in
+# groups_<Account>.json next to the metadata file:
+#     {"g-20261013-101500": {"photos": ["a.jpg", "b.jpg"], "message": ..., "place": ...}}
+# The group's message and place are used for the post instead of any one
+# photo's; each photo keeps its own alt text. A group's photos always share
+# a status folder -- curate.py moves them together.
+# ---------------------------------------------------------------------------
+
+MAX_GROUP_PHOTOS = 4  # Bluesky's limit on images per post
+MIN_GROUP_PHOTOS = 2
+
+
+def groups_path(account: str) -> Path:
+    return METADATA_DIR / f"groups_{account}.json"
+
+
+def load_groups(account: str) -> dict:
+    path = groups_path(account)
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def save_groups(account: str, groups: dict) -> None:
+    groups_path(account).write_text(json.dumps(groups, indent=2, sort_keys=True))
+
+
+def group_of(groups: dict, filename: str) -> str | None:
+    """The id of the group this photo belongs to, if any."""
+    return next((gid for gid, g in groups.items() if filename in g["photos"]), None)
+
+
+def group_entry(group: dict, entries: dict) -> dict:
+    """The group as a single metadata-like entry, for compose_message and
+    the poster's ordering: its own message and place, and the earliest date
+    any of its photos was taken."""
+    dates = sorted(d for d in (entries.get(f, {}).get("date_taken") for f in group["photos"]) if d)
+    return {"message": group.get("message") or "", "place": group.get("place") or "",
+            "date_taken": dates[0] if dates else None}
+
+
+def effective_entry(filename: str, entries: dict, groups: dict) -> dict:
+    """What a post of this photo is built from: its group's entry if it's in
+    one, else its own."""
+    gid = group_of(groups, filename)
+    return group_entry(groups[gid], entries) if gid else entries.get(filename, {})
+
+
+def remove_from_group(account: str, filename: str) -> None:
+    """Takes a photo out of its group; a group left with one photo is
+    dissolved (that photo just becomes a single again)."""
+    groups = load_groups(account)
+    gid = group_of(groups, filename)
+    if gid is None:
+        return
+    groups[gid]["photos"].remove(filename)
+    if len(groups[gid]["photos"]) < MIN_GROUP_PHOTOS:
+        del groups[gid]
+    save_groups(account, groups)
+
+
 def _scan(d: Path) -> list[str]:
     if not d.exists():
         return []
@@ -160,6 +220,7 @@ def delete_photo(account: str, filename: str) -> None:
     entries = load_metadata(account)
     entries.pop(filename, None)
     save_metadata(account, entries)
+    remove_from_group(account, filename)
 
 
 def move_to_account(account: str, filename: str, to_account: str) -> Path:
@@ -196,6 +257,7 @@ def move_to_account(account: str, filename: str, to_account: str) -> Path:
 
     src_entries.pop(filename, None)
     save_metadata(account, src_entries)
+    remove_from_group(account, filename)
 
     dest_entries = load_metadata(to_account)
     dest_entries[filename] = entry
