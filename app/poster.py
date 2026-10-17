@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Multi-feed Bluesky posting daemon.
+"""Multi-feed posting daemon. The posting itself is done by each feed's
+publisher (publishers/), e.g. publishers/bluesky.py.
 
 One process, one thread per enabled feed in feeds.json, each posting at
 fixed local times (config.slot_times -- by default 08:00, 14:00, 20:00).
@@ -38,7 +39,6 @@ import json
 import logging
 import os
 import random
-import re
 import signal
 import sys
 import threading
@@ -46,56 +46,17 @@ from pathlib import Path
 
 import config
 import metadata as md
+import publishers
 import upload_prep
 
 logger = logging.getLogger(__name__)
 
 POLL_SECONDS = 30
 LATE_GRACE = datetime.timedelta(hours=1)  # how late a missed slot may still be posted
-PLACEHOLDER_PASSWORD = "xxxx-xxxx-xxxx-xxxx"  # as in .local.env.example
 
 STATE_DIR = config.app_path("STATE_DIR", "state")
 POSTED_LOG = STATE_DIR / "posted_log.jsonl"
 _log_lock = threading.Lock()
-
-
-# ---------------------------------------------------------------------------
-# Bluesky
-# ---------------------------------------------------------------------------
-
-def build_hashtag_facets(text: str):
-    from atproto import models as atproto_models
-
-    facets = []
-    for match in re.finditer(r"#\w+", text):
-        tag = match.group(0)[1:]
-        byte_start = len(text[: match.start()].encode("utf-8"))
-        byte_end = byte_start + len(match.group(0).encode("utf-8"))
-        facets.append(
-            atproto_models.AppBskyRichtextFacet.Main(
-                index=atproto_models.AppBskyRichtextFacet.ByteSlice(byte_start=byte_start, byte_end=byte_end),
-                features=[atproto_models.AppBskyRichtextFacet.Tag(tag=tag)],
-            )
-        )
-    return facets
-
-
-def post_to_bluesky(handle: str, app_password: str, images: list[upload_prep.PreparedImage],
-                    alt_texts: list[str], message: str) -> str:
-    from atproto import Client, models
-
-    client = Client()
-    client.login(handle, app_password)
-    resp = client.send_images(
-        text=message,
-        images=[image.data for image in images],
-        image_alts=alt_texts,
-        facets=build_hashtag_facets(message),
-        # Without an aspect ratio Bluesky falls back to a square crop.
-        image_aspect_ratios=[models.AppBskyEmbedDefs.AspectRatio(width=image.width, height=image.height)
-                             for image in images],
-    )
-    return getattr(resp, "uri", "")
 
 
 # ---------------------------------------------------------------------------
@@ -317,8 +278,7 @@ def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today
     return sorted(random.sample(candidates, len(candidates)), key=key)  # stable, so ties stay shuffled
 
 
-def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool,
-              photo: str = None) -> bool:
+def run_cycle(account: str, feed_cfg: dict, publisher, dry_run: bool, photo: str = None) -> bool:
     """Posts one photo, or one group -- `photo` (or its group) if given,
     else per the feed's order. Returns True if something was posted."""
     entries, candidates, up_next = queue(account)
@@ -377,7 +337,7 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
                               for f, i, alt in zip(photos, images, alt_texts)), message)
         return False
 
-    uri = post_to_bluesky(handle, app_password, images, alt_texts, message)
+    uri = publisher.publish(images, alt_texts, message)
     now = datetime.datetime.now(datetime.timezone.utc)
     # Log before moving: if the move fails, the log alone still stops a repost.
     for f in photos:
@@ -390,12 +350,11 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
     return True
 
 
-def attempt(account: str, feed_cfg: dict, handle: str, app_password: str, dry_run: bool,
-            photo: str = None) -> None:
+def attempt(account: str, feed_cfg: dict, publisher, dry_run: bool, photo: str = None) -> None:
     state = load_state(account)
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
-        if run_cycle(account, feed_cfg, handle, app_password, dry_run, photo):
+        if run_cycle(account, feed_cfg, publisher, dry_run, photo):
             state["last_posted_at"] = now.isoformat()
     except Exception:
         logger.exception("[%s] post cycle failed, will try again at the next slot", account)
@@ -406,14 +365,14 @@ def attempt(account: str, feed_cfg: dict, handle: str, app_password: str, dry_ru
 
 def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.Event,
                 photo: str = None) -> None:
-    handle, app_password = config.credentials(account)
-    if not dry_run and (not handle or not app_password):
-        logger.error("[%s] missing %s_BSKY_HANDLE / %s_BSKY_APP_PASSWORD in .local.env",
-                     account, account.upper(), account.upper())
+    publisher = publishers.for_feed(account)
+    problem = publisher.missing_credentials()
+    if not dry_run and problem:
+        logger.error("[%s] can't post to %s: %s", account, publisher.platform, problem)
         return
 
     if once:
-        attempt(account, current_feeds()[account], handle, app_password, dry_run, photo)
+        attempt(account, current_feeds()[account], publisher, dry_run, photo)
         return
 
     cfg = current_feeds()[account]
@@ -437,7 +396,7 @@ def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.E
             now = datetime.datetime.now(cfg["tz"])
             state = load_state(account)
             if due_slot(state, cfg, now):
-                attempt(account, cfg, handle, app_password, dry_run)
+                attempt(account, cfg, publisher, dry_run)
             else:
                 latest = config.latest_slot(cfg, now)
                 if last_attempt(state) < latest and latest != missed_logged:
@@ -463,19 +422,16 @@ def check(accounts: list[str], feeds: dict) -> bool:
         cfg = feeds[account]
         print(f"== {account}")
         print(f"   hashtags: {' '.join(cfg['hashtags']) or '(none)'}")
-        handle, app_password = config.credentials(account)
-        if not handle or not app_password or app_password == PLACEHOLDER_PASSWORD:
-            # Don't attempt it: Bluesky allows only 10 failed logins a day.
-            print(f"   ✗ {account.upper()}_BSKY_HANDLE / _APP_PASSWORD not set in .local.env")
+        publisher = publishers.for_feed(account)
+        problem = publisher.missing_credentials()
+        if problem:
+            print(f"   ✗ {problem}")
             ok = False
         else:
             try:
-                from atproto import Client
-                Client().login(handle, app_password)
-                print(f"   ✓ login as {handle}")
+                print(f"   ✓ {publisher.check_login()}")
             except Exception as exc:
-                content = getattr(getattr(exc, "response", None), "content", None)
-                print(f"   ✗ login as {handle} failed: {getattr(content, 'message', None) or exc}")
+                print(f"   ✗ {exc}")
                 ok = False
 
         if not md.curated_dir(account).exists():

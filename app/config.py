@@ -82,13 +82,6 @@ def app_path(env_var: str, default: str) -> Path:
     return p if p.is_absolute() else (APP_DIR / p).resolve()
 
 
-def credentials(account: str) -> tuple[str, str]:
-    prefix = account.upper()
-    handle = os.environ.get(f"{prefix}_BSKY_HANDLE", "").strip()
-    app_password = os.environ.get(f"{prefix}_BSKY_APP_PASSWORD", "").strip()
-    return handle, app_password
-
-
 def _validate(account: str, cfg: dict) -> None:
     unknown = set(cfg) - set(DEFAULTS)
     if unknown:

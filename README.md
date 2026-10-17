@@ -54,7 +54,9 @@ docs/CHEATSHEET.md           quick reference: streams, the Pi, services
 app/
     upload_prep.py           strips photo metadata (GPS etc.) before upload
     feeds.json               feed definitions: on/off, hashtags, schedule, timezone
-    poster.py                posting daemon
+    poster.py                posting daemon: picks, prepares and records each post
+    publishers/              the posting itself, one per platform
+        bluesky.py           Bluesky: login, images + alt text, hashtag links
     curate.py                curation web app (+ static/curate.html)
     build_metadata.py        add metadata entries for new photos
     regenerate_missing_alt_text.py
