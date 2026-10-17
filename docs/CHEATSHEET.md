@@ -120,6 +120,8 @@ cd ~/projects/postcards/app && .venv/bin/python3 curate.py   # 2. curate at http
 - **The laptop is in charge.** Don't curate or edit files on the Pi: the next sync overwrites them.
   The Pi only posts and reports back what it posted.
 - **Preview a sync** with `sync_to_pi.sh --dry-run`.
+- **Sync from `main` only.** The sync deploys the checked-out branch to the Pi, so it refuses to run
+  from any other branch. `git switch main` first, or pass `--allow-branch` to deploy a branch on purpose.
 - **Back up the laptop** (Time Machine or similar). Your alt text and captions live in
   `metadata_*.json`, which isn't in git. The Pi's copy is the only other one.
 - **See what posted:** `ssh pi 'journalctl -u postcards-poster --since today -o cat'`.

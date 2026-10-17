@@ -23,7 +23,10 @@
 # Even if a photo is posted on the Pi mid-sync and step 3 copies it back into
 # curated/, poster.py won't post it again (it checks posted/ and its log).
 #
-# Usage: ./sync_to_pi.sh [--dry-run] [--restart]
+# Refuses to run from any branch but main (the Pi's main is whatever is
+# pushed), unless --allow-branch is given.
+#
+# Usage: ./sync_to_pi.sh [--dry-run] [--restart] [--allow-branch]
 # Needs DEPLOY_HOST (and optionally DEPLOY_DIR) in .local.env.
 
 set -euo pipefail
@@ -33,10 +36,12 @@ ROOT="$(dirname "$APP_DIR")"
 
 DRY_RUN=0
 RESTART=0
+ALLOW_BRANCH=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --restart) RESTART=1 ;;
+    --allow-branch) ALLOW_BRANCH=1 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -73,6 +78,13 @@ for feed in $FEEDS; do
   fi
   mkdir -p "$LOCAL_PHOTOS/$feed"/{holding-pen,curated,up-next,posted}
 done
+
+BRANCH="$(git -C "$ROOT" branch --show-current)"
+if [[ "$BRANCH" != "main" ]] && (( ! ALLOW_BRANCH )); then
+  echo "On branch '${BRANCH:-(detached)}', not main -- the Pi would run this branch's code." >&2
+  echo "Switch back first (git switch main), or pass --allow-branch to deploy it on purpose." >&2
+  exit 1
+fi
 
 if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ]]; then
   echo "Uncommitted changes in the repo -- commit them first (the Pi only runs committed state):" >&2
