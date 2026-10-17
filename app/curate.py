@@ -177,7 +177,16 @@ def api_list_photos(account):
         elif gid not in listed_groups:
             listed_groups.add(gid)
             results.append(_group_item(account, gid, groups, entries, feeds, location_tags))
+    if status == md.UP_NEXT_SUBDIR:
+        queue = md.up_next_queue(account, groups)
+        for item in results:
+            item["queue_pos"] = queue.index(_item_key(item)) + 1
+        results.sort(key=lambda item: item["queue_pos"])
     return jsonify(results)
+
+
+def _item_key(item: dict) -> str:
+    return item["id"] if item["kind"] == "group" else item["filename"]
 
 
 def _group_item(account, gid, groups, entries, feeds=None, location_tags=None) -> dict:
@@ -231,6 +240,9 @@ def api_create_group(account):
     gid = f"g-{uuid.uuid4().hex[:8]}"
     groups[gid] = {"photos": filenames, "message": first("message"), "place": first("place")}
     md.save_groups(account, groups)
+    # In up-next, the group takes the place of its highest photo; anywhere
+    # else, its photos just leave the order.
+    md.replace_in_up_next(account, filenames, [gid] if statuses == {md.UP_NEXT_SUBDIR} else [])
     return jsonify(_group_item(account, gid, groups, entries))
 
 
@@ -257,6 +269,7 @@ def api_update_group(account, gid):
         if len(photos) < md.MIN_GROUP_PHOTOS:
             del groups[gid]
             md.save_groups(account, groups)
+            md.replace_in_up_next(account, [gid], photos)
             return jsonify({"dissolved": gid})
     md.save_groups(account, groups)
     return jsonify(_group_item(account, gid, groups, md.load_metadata(account)))
@@ -268,10 +281,39 @@ def api_ungroup(account, gid):
     if account not in md.ACCOUNTS:
         abort(404)
     groups = md.load_groups(account)
-    if groups.pop(gid, None) is None:
+    group = groups.pop(gid, None)
+    if group is None:
         abort(404)
     md.save_groups(account, groups)
+    md.replace_in_up_next(account, [gid], group["photos"])
     return jsonify({"ungrouped": gid})
+
+
+@app.put("/api/up-next/<account>")
+def api_move_in_up_next(account):
+    """Move one item (a photo's filename or a group's id) within the up-next
+    order: {"key": k, "before": other} or {"after": other}, or "to": "top" /
+    "bottom". Relative moves keep working while the list is filtered."""
+    if account not in md.ACCOUNTS:
+        abort(404)
+    body = request.get_json(force=True)
+    queue = md.up_next_queue(account)
+    key = body.get("key")
+    if key not in queue:
+        abort(404, f"{key!r} isn't in up-next")
+    queue.remove(key)
+    if body.get("to") == "top":
+        queue.insert(0, key)
+    elif body.get("to") == "bottom":
+        queue.append(key)
+    elif body.get("before") in queue:
+        queue.insert(queue.index(body["before"]), key)
+    elif body.get("after") in queue:
+        queue.insert(queue.index(body["after"]) + 1, key)
+    else:
+        abort(400, "give before/after (an item in up-next) or to: top/bottom")
+    md.save_up_next_order(account, queue)
+    return jsonify(queue)
 
 
 @app.get("/api/photos/<account>/<filename>/image")
@@ -360,6 +402,10 @@ def api_set_status(account, filename):
     for f in groups[gid]["photos"] if gid else [filename]:
         if md.find_photo(account, f)[1] not in (None, md.POSTED_SUBDIR):
             md.move_photo(account, f, to_status)
+    # Newly up next goes to the bottom of the order; leaving takes it out.
+    key = gid or filename
+    order = [k for k in md.load_up_next_order(account) if k != key]
+    md.save_up_next_order(account, order + [key] if to_status == md.UP_NEXT_SUBDIR else order)
     return jsonify({"filename": filename, "status": to_status})
 
 

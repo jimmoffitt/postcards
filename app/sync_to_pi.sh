@@ -9,9 +9,9 @@
 #      checkout updates in place). The first run creates that repo. Refuses
 #      to run with uncommitted changes, so the Pi only ever runs committed
 #      code. Then copy the photo metadata (metadata_<Feed>.json -- not in
-#      git, since it holds GPS positions) and photo groups (groups_<Feed>.json);
-#      the Pi keeps a dated copy of any
-#      version it replaces in .metadata-backups/.
+#      git, since it holds GPS positions), photo groups (groups_<Feed>.json) and
+#      the up-next order (up_next_<Feed>.json); the Pi keeps a dated copy of
+#      any version it replaces in .metadata-backups/.
 #   3. Mirror the Mac's holding-pen/, curated/ and up-next/ onto the Pi (the Mac is the
 #      source of truth for curation decisions, including deletes). posted/ is
 #      only ever added to, never deleted from, in either direction.
@@ -117,10 +117,13 @@ for feed in $FEEDS; do
   else
     echo "  warning: no metadata_$feed.json -- the Pi can't post $feed photos without it" >&2
   fi
-  # Photo groups (posted together); only exists once a group has been made.
-  if [[ -f "$ROOT/groups_$feed.json" ]]; then
-    metadata_files+=("$ROOT/groups_$feed.json")
-  fi
+  # Photo groups (posted together) and the up-next order; each only exists
+  # once it's been used in the curate app.
+  for extra in "groups_$feed.json" "up_next_$feed.json"; do
+    if [[ -f "$ROOT/$extra" ]]; then
+      metadata_files+=("$ROOT/$extra")
+    fi
+  done
 done
 if (( ${#metadata_files[@]} )); then
   DATA_RSYNC=(rsync -a --itemize-changes --checksum --backup --backup-dir=".metadata-backups/$(date +%Y%m%d-%H%M%S)")

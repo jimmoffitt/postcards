@@ -265,6 +265,14 @@ def post_units(candidates: list[str], groups: dict) -> dict[str, list[str]]:
     return units
 
 
+def up_next_ranks(account: str, units: dict, groups: dict) -> dict[str, int]:
+    """{first photo of a post: its position in the up-next order}, the same
+    order the curate app lists (unordered ones last, by filename)."""
+    position = {k: i for i, k in enumerate(md.up_next_queue(account, groups))}
+    return {first: position[md.unit_key(first, groups)] for first in units
+            if md.unit_key(first, groups) in position}
+
+
 def _day_of_year(month: int, day: int) -> int:
     # A non-leap year, so Feb 29 counts as Feb 28.
     return datetime.date(2001, month, min(day, 28) if month == 2 else day).timetuple().tm_yday
@@ -283,9 +291,12 @@ def season_distance(date_taken: str | None, today: datetime.date) -> int | None:
 
 
 def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today: datetime.date,
-                     recent: list[str] = (), up_next: set[str] = frozenset()) -> list[str]:
+                     recent: list[str] = (), up_next: set[str] = frozenset(),
+                     up_next_rank: dict = None) -> list[str]:
     """Candidates in the order to try them, sorted on these keys in turn:
-    1. up-next/ photos before curated/ ones;
+    1. up-next/ photos before curated/ ones, and among up-next/ photos, the
+       curator's order (up_next_rank: {candidate: position}) before anything
+       else -- the rules below only break ties between unranked ones;
     2. "on_this_day": photos taken on today's month and day (any year) first;
     3. photos from a region in `recent` (the regions of the last few posts)
        after those from anywhere else, including photos with no place;
@@ -299,7 +310,8 @@ def order_candidates(candidates: list[str], entries: dict, feed_cfg: dict, today
         d = season_distance(entries[filename].get("date_taken"), today)
         on_this_day = order == "on_this_day" and d == 0
         band = 0 if order != "seasonal" else 10_000 if d is None else max(0, -(-d // window) - 1)  # ceil(d/window)-1
-        return (filename not in up_next, not on_this_day,
+        rank = (up_next_rank or {}).get(filename, len(up_next_rank or {})) if filename in up_next else 0
+        return (filename not in up_next, rank, not on_this_day,
                 md.region(entries[filename].get("place")) in recent, band)
 
     return sorted(random.sample(candidates, len(candidates)), key=key)  # stable, so ties stay shuffled
@@ -327,7 +339,8 @@ def run_cycle(account: str, feed_cfg: dict, handle: str, app_password: str, dry_
     today = datetime.datetime.now(feed_cfg["tz"]).date()
     recent = recent_regions(account, entries, groups, feed_cfg["region_cooldown"])
     unit_entries = {first: md.effective_entry(first, entries, groups) for first in units}
-    for first in order_candidates(list(units), unit_entries, feed_cfg, today, recent, up_next):
+    ranks = up_next_ranks(account, units, groups)
+    for first in order_candidates(list(units), unit_entries, feed_cfg, today, recent, up_next, ranks):
         try:
             images = [upload_prep.prepare(md.find_photo(account, f)[0]) for f in units[first]]
             break
@@ -503,6 +516,11 @@ def check(accounts: list[str], feeds: dict) -> bool:
             by_region = collections.Counter(md.region(e.get("place")) or "(no place)" for e in unit_entries.values())
             print("   queued by region: " + ", ".join(f"{r} {n}" for r, n in by_region.most_common()))
         up_next_posts = sum(1 for first in units if first in up_next)
+        ranks = up_next_ranks(account, units, groups)
+        if up_next_posts:
+            in_order = sorted((f for f in units if f in up_next), key=lambda f: ranks.get(f, len(ranks)))
+            print("   up next, in order: " + ", ".join(
+                f if len(units[f]) == 1 else f"[group of {len(units[f])}: {f}, ...]" for f in in_order))
         grouped = sum(1 for photos in units.values() if len(photos) > 1)
         print(f"   queue: {len(units)} posts ready ({up_next_posts} up next, {len(units) - up_next_posts} curated"
               + (f"; {grouped} of them groups, {len(candidates)} photos in all" if grouped else "")
@@ -518,7 +536,7 @@ def check(accounts: list[str], feeds: dict) -> bool:
         print(f"   next post: {describe_next(load_state(account), cfg)}")
         if units:
             sample = order_candidates(list(units), unit_entries, cfg, datetime.datetime.now(cfg["tz"]).date(),
-                                      recent, up_next)[0]
+                                      recent, up_next, ranks)[0]
             text = md.compose_message(unit_entries[sample], cfg, location_tags)
             print(f"   a likely next post ({', '.join(units[sample])}, "
                   f"taken {unit_entries[sample].get('date_taken') or 'undated'}):\n      "

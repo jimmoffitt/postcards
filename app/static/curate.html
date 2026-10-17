@@ -68,6 +68,10 @@
   .group-bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #2a2d34; font-size: 12px; color: #aaa; }
   .group-bar button { padding: 5px 10px; font-size: 12px; }
   .group-bar[hidden] { display: none; }
+  .list-item .pos { font-size: 12px; color: #e0b050; min-width: 18px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .list-item .order { margin-left: auto; display: flex; gap: 2px; flex-shrink: 0; }
+  .list-item .order button { background: #2a2d34; color: #ccc; padding: 2px 6px; font-size: 11px; border-radius: 4px; }
+  .list-item .order button:hover:not(:disabled) { background: #3a3f48; color: #fff; }
 
   /* Photos laid out the way Bluesky shows a multi-image post */
   .mosaic { display: grid; gap: 3px; border-radius: 8px; overflow: hidden; background: #000; }
@@ -166,6 +170,33 @@ const mosaic = (filenames, cls = '') =>
   `<div class="mosaic n${filenames.length} ${cls}">${filenames.map(f => `<img src="${imgUrl(f)}" loading="lazy">`).join('')}</div>`;
 // The photo whose status stands for the whole item (a group's photos share one).
 const itemFilename = (p) => p.kind === 'group' ? p.photos[0].filename : p.filename;
+// How the up-next order refers to an item: a group's id, or the photo's filename.
+const itemKey = (p) => p.kind === 'group' ? p.id : p.filename;
+const isOrderView = () => $('status').value === 'up-next';
+
+function orderControls(p, i) {
+  if (!isOrderView()) return '';
+  const last = i === photos.length - 1;
+  return `<span class="order">
+    <button title="Move to the top" data-order="top" data-idx="${i}" ${p.queue_pos === 1 ? 'disabled' : ''}>Top</button>
+    <button title="Move up" data-order="up" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>&#x25B2;</button>
+    <button title="Move down" data-order="down" data-idx="${i}" ${last ? 'disabled' : ''}>&#x25BC;</button>
+  </span>`;
+}
+
+async function moveInUpNext(i, how) {
+  const p = photos[i];
+  const body = {key: itemKey(p)};
+  if (how === 'top') body.to = 'top';
+  else if (how === 'up') body.before = itemKey(photos[i - 1]);
+  else body.after = itemKey(photos[i + 1]);
+  if (photos[selectedIndex]) await save();  // keep unsaved edits to the open item
+  const resp = await fetch(`/api/up-next/${currentAccount}`, {
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (!resp.ok) { alert(`Couldn\u2019t reorder: ${await resp.text().catch(() => resp.statusText)}`); return; }
+  await loadPhotos(body.key);  // reload in the new order, keeping the moved item selected
+}
 
 const $ = (id) => document.getElementById(id);
 
@@ -205,7 +236,7 @@ async function loadStreamInfo() {
   }
 }
 
-async function loadPhotos() {
+async function loadPhotos(selectKey = null) {
   const accountChanged = currentAccount !== $('account').value;
   currentAccount = $('account').value;
   if (accountChanged) await loadPlaceOptions();
@@ -232,7 +263,8 @@ async function loadPhotos() {
   photos = await resp.json();
   checked = [];
   loadStreamInfo();
-  selectedIndex = photos.length ? 0 : -1;
+  const keep = selectKey ? photos.findIndex(p => itemKey(p) === selectKey) : -1;
+  selectedIndex = keep >= 0 ? keep : photos.length ? 0 : -1;
   renderList();
   renderEditor();
 }
@@ -243,14 +275,16 @@ function renderList() {
   const upNextBadge = (p) => p.status === 'up-next' && $('status').value !== 'up-next' ? '<span class="badge">UP NEXT</span>' : '';
   $('list').innerHTML = photos.map((p, i) => p.kind === 'group' ? `
     <div class="list-item group ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
-      <span class="check-spacer"></span>
+      ${isOrderView() ? `<span class="pos">${p.queue_pos}</span>` : '<span class="check-spacer"></span>'}
       ${mosaic(p.photos.map(x => x.filename), 'mini')}
       <div class="info">
         <div class="fname">Group of ${p.photos.length}${upNextBadge(p)}</div>
         <div class="tag">${esc(p.message || p.place || p.photos.map(x => x.filename).join(', '))}</div>
       </div>
+      ${orderControls(p, i)}
     </div>` : `
     <div class="list-item ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
+      ${isOrderView() ? `<span class="pos">${p.queue_pos}</span>` : ''}
       ${p.status === 'posted' ? '<span class="check-spacer"></span>'
         : `<input type="checkbox" title="Tick 2\u20134 photos, then Group" data-file="${esc(p.filename)}" ${checked.includes(p.filename) ? 'checked' : ''}>`}
       <img src="${imgUrl(p.filename)}" loading="lazy">
@@ -258,6 +292,7 @@ function renderList() {
         <div class="fname">${p.filename}${upNextBadge(p)}</div>
         <div class="tag">${p.place || (p.alt_text ? '' : 'needs alt text')}</div>
       </div>
+      ${orderControls(p, i)}
     </div>
   `).join('');
   [...document.querySelectorAll('.list-item')].forEach(el => {
@@ -269,6 +304,12 @@ function renderList() {
       const f = cb.dataset.file;
       checked = cb.checked ? [...checked, f] : checked.filter(x => x !== f);
       renderGroupBar();
+    });
+  });
+  [...document.querySelectorAll('.list-item .order button')].forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();  // moving doesn't open the item
+      moveInUpNext(parseInt(btn.dataset.idx), btn.dataset.order);
     });
   });
   renderGroupBar();
@@ -556,7 +597,7 @@ const STATUS_CHOICES = [['holding-pen', 'Holding pen'], ['curated', 'Curated'], 
 const STATUS_NOTES = {
   'holding-pen': 'Not posted until it\u2019s moved to Curated or Up next.',
   'curated': 'Ready to post; picked by season and region.',
-  'up-next': 'Posted before anything in Curated.',
+  'up-next': 'Posted before anything in Curated, top of the Up next list first.',
 };
 
 async function setStatus(newStatus) {

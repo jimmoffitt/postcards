@@ -132,7 +132,8 @@ through daylight-saving changes.
 
 **Which photo.** Each slot picks from these, in turn:
 
-1. **Up next.** Anything in `up-next/` goes before everything in `curated/`.
+1. **Up next.** Anything in `up-next/` goes before everything in `curated/`, in the order set in
+   the curate app (top first).
 2. **On this day.** With `"order": "on_this_day"` (the default), a photo taken on today's month and
    day, in any earlier year, goes first.
 3. **A different region.** A photo's region is the last part of its place, its state or country:
@@ -227,6 +228,12 @@ when grouped. Use **Earlier** / **Later** to set the order, **Remove from group*
 **Ungroup** to make them separate posts again. A group counts as one post in "days remain", in
 the schedule, and in the region rule. Groups are saved in `groups_<Feed>.json` next to the
 metadata, which `sync_to_pi.sh` copies to the Pi too.
+
+**Up next order.** With the Status filter on **Up next**, the list shows the queue in posting
+order, top first, numbered. **▲ ▼** move an item one place and **Top** moves it to the front; a
+group moves as one item. A photo newly set to Up next joins the bottom. The poster takes Up next
+strictly in this order, ahead of everything in Curated (the on-this-day and region rules only
+apply to Curated). The order is saved in `up_next_<Feed>.json`, which `sync_to_pi.sh` copies to the Pi.
 
 Changes are saved to `metadata_<Feed>.json`. These files hold GPS positions, so they're kept out of
 git. `sync_to_pi.sh` copies them to the Pi, and the Pi keeps a dated copy of every version it

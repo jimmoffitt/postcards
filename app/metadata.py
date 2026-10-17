@@ -146,8 +146,57 @@ def remove_from_group(account: str, filename: str) -> None:
         return
     groups[gid]["photos"].remove(filename)
     if len(groups[gid]["photos"]) < MIN_GROUP_PHOTOS:
-        del groups[gid]
+        replace_in_up_next(account, [gid], groups.pop(gid)["photos"])
     save_groups(account, groups)
+
+
+# ---------------------------------------------------------------------------
+# Up next order: the curator's posting order for up-next/, top first, kept in
+# up_next_<Account>.json as a list of keys -- a group's id, or a single
+# photo's filename. Only curate.py writes it; poster.py reads it. Keys that
+# aren't in up-next/ any more are ignored, and up-next photos missing from it
+# go after the listed ones.
+# ---------------------------------------------------------------------------
+
+def up_next_order_path(account: str) -> Path:
+    return METADATA_DIR / f"up_next_{account}.json"
+
+
+def load_up_next_order(account: str) -> list[str]:
+    path = up_next_order_path(account)
+    return json.loads(path.read_text()) if path.exists() else []
+
+
+def save_up_next_order(account: str, order: list[str]) -> None:
+    up_next_order_path(account).write_text(json.dumps(order, indent=2))
+
+
+def replace_in_up_next(account: str, old_keys: list[str], new_keys: list[str]) -> None:
+    """Puts new_keys where the first of old_keys stood in the up-next order
+    (e.g. a new group takes its photos' place, an ungrouped group's photos
+    take the group's), dropping the rest of old_keys. No-op if none of
+    old_keys is in the order."""
+    order = load_up_next_order(account)
+    positions = [order.index(k) for k in old_keys if k in order]
+    if not positions:
+        return
+    at = min(positions)
+    head = [k for k in order[:at] if k not in old_keys and k not in new_keys]
+    tail = [k for k in order[at:] if k not in old_keys and k not in new_keys]
+    save_up_next_order(account, head + list(new_keys) + tail)
+
+
+def unit_key(filename: str, groups: dict) -> str:
+    """What a photo is posted as: its group's id, or itself."""
+    return group_of(groups, filename) or filename
+
+
+def up_next_queue(account: str, groups: dict = None) -> list[str]:
+    """The keys (see unit_key) of everything in up-next/, in posting order."""
+    groups = load_groups(account) if groups is None else groups
+    present = list(dict.fromkeys(unit_key(f, groups) for f in scan_up_next(account)))
+    order = [k for k in load_up_next_order(account) if k in present]
+    return order + [k for k in present if k not in order]
 
 
 def _scan(d: Path) -> list[str]:
