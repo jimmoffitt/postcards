@@ -103,7 +103,7 @@ def _reencode_upright(img: Image.Image) -> bytes:
     raise ValueError(f"still over {MAX_IMAGE_BYTES} bytes at {scale:.0%} size -- rerun prepare_photos.py on it")
 
 
-def _verify(data: bytes) -> tuple[int, int]:
+def verify_clean(data: bytes) -> tuple[int, int]:
     """Decodes fully and confirms there's no EXIF/XMP left. Returns (w, h)."""
     with Image.open(io.BytesIO(data)) as img:
         img.load()
@@ -126,5 +126,5 @@ def prepare(photo_path: Path) -> PreparedImage:
     if len(data) > MAX_IMAGE_BYTES:
         raise ValueError(f"{photo_path.name} is {len(data)} bytes, over the "
                          f"{MAX_IMAGE_BYTES}-byte Bluesky image limit -- rerun prepare_photos.py on it")
-    width, height = _verify(data)
+    width, height = verify_clean(data)
     return PreparedImage(data, width, height, method)

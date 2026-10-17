@@ -89,6 +89,8 @@ def api_stream(account):
     return jsonify({
         "summary": summary,
         "enabled": cfg["enabled"],
+        "platform": cfg["platform"],
+        "limits": cfg["limits"],  # photos per post, length, hashtags: for grouping and the preview
         "posts_per_day": per_day,
         "slots": [t.strftime("%H:%M") for t in slots],
         "timezone": cfg["timezone"],
@@ -212,14 +214,16 @@ def _group_item(account, gid, groups, entries, feeds=None, location_tags=None) -
 
 @app.post("/api/groups/<account>")
 def api_create_group(account):
-    """Group 2-4 unposted, ungrouped photos into one post. They keep their
+    """Group 2 or more (up to the feed's platform limit: 4 on Bluesky, 10
+    on Instagram) unposted, ungrouped photos into one post. They keep their
     status if they share one; otherwise they all go to the holding pen. The
     group starts with the first message and place set on any of them."""
     if account not in md.ACCOUNTS:
         abort(404)
     filenames = request.get_json(force=True).get("photos") or []
-    if not (md.MIN_GROUP_PHOTOS <= len(filenames) <= md.MAX_GROUP_PHOTOS) or len(set(filenames)) != len(filenames):
-        abort(400, f"a group needs {md.MIN_GROUP_PHOTOS} to {md.MAX_GROUP_PHOTOS} different photos")
+    limits = config.load_feeds()[account]["limits"]
+    if not (md.MIN_GROUP_PHOTOS <= len(filenames) <= limits["max_photos"]) or len(set(filenames)) != len(filenames):
+        abort(400, f"a {limits['name']} group needs {md.MIN_GROUP_PHOTOS} to {limits['max_photos']} different photos")
     groups = md.load_groups(account)
     statuses = set()
     for f in filenames:

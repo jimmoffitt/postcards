@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
+
+import upload_prep
 
 PLACEHOLDER_PASSWORD = "xxxx-xxxx-xxxx-xxxx"  # as in .local.env.example
 
@@ -59,6 +62,10 @@ class BlueskyPublisher:
             content = getattr(getattr(exc, "response", None), "content", None)
             raise RuntimeError(f"login as {self.handle} failed: {getattr(content, 'message', None) or exc}") from exc
         return f"login as {self.handle}"
+
+    def prepare(self, photo_path: Path) -> upload_prep.PreparedImage:
+        """Metadata stripped, upright, within Bluesky's ~976 KB image limit."""
+        return upload_prep.prepare(photo_path)
 
     def publish(self, images: list, alt_texts: list[str], text: str) -> str:
         """Posts `text` with `images` (upload_prep.PreparedImage), each with

@@ -43,6 +43,7 @@ MIN_INTERVAL_HOURS = 5 / 60  # 5 minutes
 MAX_INTERVAL_HOURS = 24
 DEFAULTS = {
     "enabled": False,
+    "platform": "bluesky",  # where the feed posts: a key of PLATFORMS
     "hashtags": [],
     "interval_hours": 6,
     "window_enabled": True,
@@ -55,6 +56,14 @@ DEFAULTS = {
     "date_format": "Photo taken %Y-%m-%d",  # last line of each post; null to leave it off
 }
 ORDERS = ("on_this_day", "seasonal", "random")
+
+# What each platform allows in one post. load_feeds puts the feed's own as
+# cfg["limits"]; the curate app's grouping and preview, the post text and
+# the poster all go by it. max_hashtags None = no limit beyond the length.
+PLATFORMS = {
+    "bluesky":   {"name": "Bluesky",   "max_photos": 4,  "max_chars": 300,  "max_hashtags": None},
+    "instagram": {"name": "Instagram", "max_photos": 10, "max_chars": 2200, "max_hashtags": 30},
+}
 HASHTAG_RE = re.compile(r"#\w+")
 
 
@@ -88,6 +97,8 @@ def _validate(account: str, cfg: dict) -> None:
         raise ValueError(f"{account}: unknown setting(s) {sorted(unknown)} -- valid: {sorted(DEFAULTS)}")
     if not isinstance(cfg["enabled"], bool):
         raise ValueError(f"{account}: enabled must be true or false")
+    if cfg["platform"] not in PLATFORMS:
+        raise ValueError(f"{account}: platform must be one of {list(PLATFORMS)}, got {cfg['platform']!r}")
     tags = cfg["hashtags"]
     if not isinstance(tags, list) or not all(isinstance(t, str) and HASHTAG_RE.fullmatch(t) for t in tags):
         raise ValueError(f"{account}: hashtags must be a list like [\"#Tag\", ...] (letters/digits/_ only), got {tags!r}")
@@ -119,7 +130,7 @@ def _validate(account: str, cfg: dict) -> None:
 
 
 def load_feeds(path: str | Path = None) -> dict:
-    """{account: {enabled, hashtags, interval_hours, window_*, timezone, tz}}
+    """{account: {enabled, platform, hashtags, interval_hours, window_*, timezone, tz, limits}}
     for every feed, enabled or not. Raises ValueError on any bad setting."""
     path = Path(path) if path else FEEDS_PATH
     raw = json.loads(path.read_text())
@@ -131,6 +142,7 @@ def load_feeds(path: str | Path = None) -> dict:
         merged = {**DEFAULTS, **file_defaults, **cfg}
         _validate(account, merged)
         merged["tz"] = ZoneInfo(merged["timezone"])
+        merged["limits"] = PLATFORMS[merged["platform"]]
         feeds[account] = merged
     return feeds
 

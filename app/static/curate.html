@@ -73,7 +73,8 @@
   .list-item .order button { background: #2a2d34; color: #ccc; padding: 2px 6px; font-size: 11px; border-radius: 4px; }
   .list-item .order button:hover:not(:disabled) { background: #3a3f48; color: #fff; }
 
-  /* Photos laid out the way Bluesky shows a multi-image post */
+  /* Photos laid out the way the feed's platform shows a multi-image post:
+     Bluesky's 2-4 photo grids, or an Instagram carousel (swiped sideways) */
   .mosaic { display: grid; gap: 3px; border-radius: 8px; overflow: hidden; background: #000; }
   .mosaic img { width: 100%; height: 100%; object-fit: cover; display: block; min-height: 0; }
   .mosaic.n2 { grid-template-columns: 1fr 1fr; aspect-ratio: 2 / 1; }
@@ -81,6 +82,9 @@
   .mosaic.n3 img:first-child { grid-row: 1 / 3; }
   .mosaic.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; aspect-ratio: 3 / 2; }
   .mosaic.mini { gap: 1px; border-radius: 4px; aspect-ratio: auto; }
+  .mosaic.carousel { display: flex; gap: 4px; overflow-x: auto; background: none; scroll-snap-type: x mandatory; }
+  .mosaic.carousel img { height: 340px; width: auto; max-width: 85%; object-fit: contain; background: #000;
+                         border-radius: 6px; scroll-snap-align: start; flex-shrink: 0; }
   .group-photo { display: flex; gap: 12px; align-items: flex-start; padding: 10px; background: #1b1e23; border: 1px solid #2a2d34; border-radius: 8px; }
   .group-photo > img { width: 96px; height: 96px; object-fit: cover; border-radius: 6px; background: #000; flex-shrink: 0; }
   .group-photo .field { flex: 1; }
@@ -162,12 +166,21 @@ let currentAccount = null;
 let placeOptions = [];
 let allAccounts = [];
 let checked = [];  // filenames ticked for grouping, in the order ticked
-const MAX_GROUP = 4;
+// The current feed's platform and what it allows in one post (from /api/stream).
+let platform = 'bluesky';
+let limits = {name: 'Bluesky', max_photos: 4, max_chars: 300, max_hashtags: null};
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const imgUrl = (filename) => `/api/photos/${currentAccount}/${encodeURIComponent(filename)}/image`;
-const mosaic = (filenames, cls = '') =>
-  `<div class="mosaic n${filenames.length} ${cls}">${filenames.map(f => `<img src="${imgUrl(f)}" loading="lazy">`).join('')}</div>`;
+const imgs = (filenames) => filenames.map(f => `<img src="${imgUrl(f)}" loading="lazy">`).join('');
+function mosaic(filenames, cls = '') {
+  if (cls === 'mini') {  // the list's thumbnail: at most a 2x2 grid
+    const shown = filenames.slice(0, 4);
+    return `<div class="mosaic n${shown.length} mini">${imgs(shown)}</div>`;
+  }
+  if (platform === 'instagram') return `<div class="mosaic carousel">${imgs(filenames)}</div>`;
+  return `<div class="mosaic n${filenames.length} ${cls}">${imgs(filenames)}</div>`;
+}
 // The photo whose status stands for the whole item (a group's photos share one).
 const itemFilename = (p) => p.kind === 'group' ? p.photos[0].filename : p.filename;
 // How the up-next order refers to an item: a group's id, or the photo's filename.
@@ -231,6 +244,8 @@ async function loadStreamInfo() {
     el.title = `Posts at ${info.slots.join(', ')} ${info.timezone} (${info.posts_per_day}/day). ` +
                `${info.curated} ready (${info.up_next} up next), ${info.holding_pen} in the holding pen.`;
     el.classList.toggle('paused', !info.enabled);
+    platform = info.platform;
+    limits = info.limits;
   } catch (err) {
     el.textContent = `Couldn't read the stream settings (feeds.json): ${err.message}`;
   }
@@ -262,7 +277,7 @@ async function loadPhotos(selectKey = null) {
 
   photos = await resp.json();
   checked = [];
-  loadStreamInfo();
+  await loadStreamInfo();  // the feed's platform limits, before rendering
   const keep = selectKey ? photos.findIndex(p => itemKey(p) === selectKey) : -1;
   selectedIndex = keep >= 0 ? keep : photos.length ? 0 : -1;
   renderList();
@@ -286,7 +301,7 @@ function renderList() {
     <div class="list-item ${p.status} ${i === selectedIndex ? 'selected' : ''}" data-idx="${i}">
       ${isOrderView() ? `<span class="pos">${p.queue_pos}</span>` : ''}
       ${p.status === 'posted' ? '<span class="check-spacer"></span>'
-        : `<input type="checkbox" title="Tick 2\u20134 photos, then Group" data-file="${esc(p.filename)}" ${checked.includes(p.filename) ? 'checked' : ''}>`}
+        : `<input type="checkbox" title="Tick 2\u2013${limits.max_photos} photos, then Group" data-file="${esc(p.filename)}" ${checked.includes(p.filename) ? 'checked' : ''}>`}
       <img src="${imgUrl(p.filename)}" loading="lazy">
       <div class="info">
         <div class="fname">${p.filename}${upNextBadge(p)}</div>
@@ -318,9 +333,10 @@ function renderList() {
 function renderGroupBar() {
   const n = checked.length;
   $('groupBar').hidden = n === 0;
-  $('groupBarText').textContent = n > MAX_GROUP ? `${n} ticked \u2014 a post holds at most ${MAX_GROUP}`
-    : n < 2 ? `${n} ticked \u2014 tick 2\u2013${MAX_GROUP} to group` : `${n} photos ticked`;
-  $('btnGroup').disabled = n < 2 || n > MAX_GROUP;
+  const max = limits.max_photos;
+  $('groupBarText').textContent = n > max ? `${n} ticked \u2014 a ${limits.name} post holds at most ${max}`
+    : n < 2 ? `${n} ticked \u2014 tick 2\u2013${max} to group` : `${n} photos ticked`;
+  $('btnGroup').disabled = n < 2 || n > max;
 }
 
 async function createGroup() {
@@ -438,7 +454,7 @@ function renderGroupEditor(g) {
     <div class="editor-top">
       <div class="editor-image">
         ${mosaic(g.photos.map(x => x.filename))}
-        <div class="meta-line" style="margin-top:8px">Group of ${n} &middot; posted together as one post &middot; ${g.date_taken || 'no date'} &middot; ${g.status}</div>
+        <div class="meta-line" style="margin-top:8px">Group of ${n} &middot; posted together as one ${platform === 'instagram' ? 'carousel' : 'post'} &middot; ${g.date_taken || 'no date'} &middot; ${g.status}</div>
       </div>
       <div class="editor-fields">
         <div>${statusSwitch(g)}${posted ? '' : '<div class="status-note">Status applies to every photo in the group.</div>'}</div>
@@ -555,7 +571,9 @@ function renderPreview(p) {
   $('f_preview').textContent = text;
   const n = document.createElement('div');
   n.className = 'count';
-  n.textContent = `${[...text].length} / 300 characters`;
+  const tags = (text.match(/#\w+/g) || []).length;
+  n.textContent = `${[...text].length} / ${limits.max_chars} characters`
+    + (limits.max_hashtags ? ` \u00b7 ${tags} / ${limits.max_hashtags} hashtags` : '');
   $('f_preview').appendChild(n);
 }
 

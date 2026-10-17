@@ -99,8 +99,7 @@ def save_metadata(account: str, data: dict) -> None:
 # a status folder -- curate.py moves them together.
 # ---------------------------------------------------------------------------
 
-MAX_GROUP_PHOTOS = 4  # Bluesky's limit on images per post
-MIN_GROUP_PHOTOS = 2
+MIN_GROUP_PHOTOS = 2  # the most is the feed's platform limit: cfg["limits"]["max_photos"]
 
 
 def groups_path(account: str) -> Path:
@@ -531,7 +530,9 @@ def sync_locations(account: str) -> dict:
 # Post text, built fresh at post time (and for the curation preview).
 # ---------------------------------------------------------------------------
 
-MAX_POST_CHARS = 300  # Bluesky counts graphemes; len() is never smaller, so this is safe
+# A post's length limit is the feed's platform's: cfg["limits"]["max_chars"].
+# Bluesky counts graphemes and Instagram characters; len() is never smaller
+# than either, so measuring with it is safe.
 
 
 def post_hashtags(entry: dict, feed_cfg: dict, location_tags: dict) -> tuple[list[str], list[str]]:
@@ -568,18 +569,25 @@ def date_line(entry: dict, feed_cfg: dict) -> str:
 
 def compose_message(entry: dict, feed_cfg: dict, location_tags: dict) -> str:
     """The caption as typed, then a blank line, the location hashtags and the
-    feed's hashtags, then a blank line and the date line. Over the length
-    limit, location tags are dropped first (from the end), then feed tags;
-    the caption itself is only cut if it's too long on its own."""
+    feed's hashtags, then a blank line and the date line. Over the feed's
+    platform limits (length, and number of hashtags where there is one),
+    location tags are dropped first (from the end), then feed tags; the
+    caption itself is only cut if it's too long on its own."""
+    limits = feed_cfg["limits"]
+    max_chars, max_tags = limits["max_chars"], limits["max_hashtags"]
     caption = (entry.get("message") or "").strip()
     location, feed = post_hashtags(entry, feed_cfg, location_tags)
     dated = date_line(entry, feed_cfg)
+    caption_tags = len(config.HASHTAG_RE.findall(caption))
 
     def join():
         tail = "\n\n".join(x for x in (" ".join(location + feed), dated) if x)
         return f"{caption}\n\n{tail}" if caption and tail else (caption or tail)
 
-    while (location or feed) and len(join()) > MAX_POST_CHARS:
+    def too_many_tags():
+        return max_tags is not None and caption_tags + len(location) + len(feed) > max_tags
+
+    while (location or feed) and (len(join()) > max_chars or too_many_tags()):
         (location or feed).pop()
     text = join()
-    return text if len(text) <= MAX_POST_CHARS else text[: MAX_POST_CHARS - 1] + "…"
+    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"

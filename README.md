@@ -27,6 +27,7 @@ the Pi, finding its IP, and managing services.
 - [Repository layout](#repository-layout)
 - [Setup (laptop)](#setup-laptop)
 - [Feeds: `feeds.json`](#feeds-feedsjson)
+- [Instagram feeds](#instagram-feeds)
 - [Adding photos](#adding-photos)
 - [Curating](#curating)
 - [Running the poster](#running-the-poster)
@@ -57,6 +58,8 @@ app/
     poster.py                posting daemon: picks, prepares and records each post
     publishers/              the posting itself, one per platform
         bluesky.py           Bluesky: login, images + alt text, hashtag links
+        instagram.py         Instagram: containers, carousels, padding, token renewal
+    r2.py                    short-lived image links on Cloudflare R2, for Instagram
     curate.py                curation web app (+ static/curate.html)
     build_metadata.py        add metadata entries for new photos
     regenerate_missing_alt_text.py
@@ -118,6 +121,7 @@ block overrides them, then the feed's own entry overrides both:
 | Setting | Built-in default | Notes |
 |---|---|---|
 | `enabled` | `false` | |
+| `platform` | `bluesky` | `bluesky` or `instagram`; see [Instagram feeds](#instagram-feeds). Changing it needs a poster restart |
 | `hashtags` | `[]` | A feed's own list **replaces** the one in `defaults`; the two aren't merged |
 | `timezone` | `UTC` | An IANA name. US Mountain time is `America/Denver`; use `America/Phoenix` for no daylight saving |
 | `interval_hours` | `6` | Whole minutes, from 5 minutes to 24 hours |
@@ -181,6 +185,40 @@ every future post and needs no migration.
 Unknown keys (typos like `"hashtgs"`), invalid timezones and out-of-range values are all rejected.
 The running poster keeps its last good settings if an edit is invalid. Validate before syncing with
 `app/.venv/bin/python3 app/poster.py --check`.
+
+## Instagram feeds
+
+A feed with `"platform": "instagram"` posts to an Instagram **Creator or Business** account (the API
+can't post to a personal one) instead of Bluesky. Everything else is the same: its own photo
+folders, curation, schedule, Up next order, alt text. Differences:
+
+- **Groups become carousels** of up to 10 photos (Bluesky: 4). The curate app shows them as a
+  sideways-scrolling strip.
+- **Post text** may be up to 2,200 characters and 30 hashtags (Bluesky: 300 characters); location
+  tags, then feed tags, are dropped to fit, as on Bluesky.
+- **Shapes:** Instagram takes photos from 4:5 (portrait) to 1.91:1 (landscape). Anything taller or
+  wider is padded with white to fit, never cropped; `--check` counts how many.
+- **Images go through Cloudflare R2.** Instagram downloads each image from a URL, so the poster
+  uploads the (metadata-stripped) copy to a private R2 bucket under a random name, gives Instagram
+  a link that expires in 15 minutes, and deletes it once the post is published (`app/r2.py`).
+
+**One-time setup:**
+
+1. Switch the Instagram account to **Creator** (Settings → Account type and tools). It must be public.
+2. At developers.facebook.com, create a **Business** app, add *API setup with Instagram login* with
+   the `instagram_business_content_publish` permission, add the account as an Instagram tester
+   (and accept the invite in Instagram), then **Generate token**.
+3. In Cloudflare, create a private **R2 bucket**, a lifecycle rule deleting objects after 1 day
+   (a backstop), and an R2 API token with *Object Read & Write* on that bucket only.
+4. Put `<FEED>_IG_ACCESS_TOKEN` and the `R2_*` settings in the Pi's `app/.local.env` (see
+   `.local.env.example`), and install the extra packages there:
+   `app/.venv/bin/pip install -r app/requirements.txt`.
+5. Add the feed to `feeds.json` with `"platform": "instagram"`, create `photos/<Feed>/`, and test with
+   `poster.py --check --workers <Feed>`, then `--once --workers <Feed>`.
+
+The token lasts 60 days; the poster renews it about weekly and keeps the current one in
+`state/<Feed>.instagram_token.json`. If a publish times out, the next attempt checks the account
+for that post before posting again, so it isn't posted twice.
 
 ## Adding photos
 

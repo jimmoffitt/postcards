@@ -13,7 +13,8 @@ group (groups_<Account>.json) is posted together with the rest of its group,
 as one post of up to 4 images with the group's message and place.
 
 feeds.json is re-read continuously, so hashtag and schedule edits apply to
-the next post without a restart. Enabling a feed needs a restart.
+the next post without a restart. Enabling a feed, or changing its platform,
+needs a restart.
 
 Each feed's last post time is kept in state/<Account>.json, so a restart
 never posts a slot twice. A slot missed while the Pi was down is still
@@ -47,7 +48,6 @@ from pathlib import Path
 import config
 import metadata as md
 import publishers
-import upload_prep
 
 logger = logging.getLogger(__name__)
 
@@ -211,16 +211,16 @@ def queue(account: str) -> tuple[dict, list[str], set[str]]:
     return entries, candidates, up_next & set(candidates)
 
 
-def post_units(candidates: list[str], groups: dict) -> dict[str, list[str]]:
+def post_units(candidates: list[str], groups: dict, max_photos: int) -> dict[str, list[str]]:
     """The queue as posts: {first photo: [every photo in that post]}. A
     single photo is a post of its own; a group's queued photos go together,
-    in the group's order."""
+    in the group's order, up to the platform's max_photos per post."""
     queued, units, taken = set(candidates), {}, set()
     for f in candidates:
         if f in taken:
             continue
         gid = md.group_of(groups, f)
-        photos = [p for p in groups[gid]["photos"] if p in queued][:md.MAX_GROUP_PHOTOS] if gid else [f]
+        photos = [p for p in groups[gid]["photos"] if p in queued][:max_photos] if gid else [f]
         taken.update(photos)
         units[photos[0]] = photos
     return units
@@ -283,7 +283,7 @@ def run_cycle(account: str, feed_cfg: dict, publisher, dry_run: bool, photo: str
     else per the feed's order. Returns True if something was posted."""
     entries, candidates, up_next = queue(account)
     groups = md.load_groups(account)
-    units = post_units(candidates, groups)
+    units = post_units(candidates, groups, feed_cfg["limits"]["max_photos"])
     queued = len(units)
     if photo:
         if photo not in candidates:
@@ -295,14 +295,15 @@ def run_cycle(account: str, feed_cfg: dict, publisher, dry_run: bool, photo: str
         return False
 
     # Seasonal (or random) order; a post with a photo that can't be made safe
-    # to upload (see upload_prep) is skipped in favour of the next, not posted as-is.
+    # to upload (see upload_prep, and the publisher's own prepare) is skipped
+    # in favour of the next, not posted as-is.
     today = datetime.datetime.now(feed_cfg["tz"]).date()
     recent = recent_regions(account, entries, groups, feed_cfg["region_cooldown"])
     unit_entries = {first: md.effective_entry(first, entries, groups) for first in units}
     ranks = up_next_ranks(account, units, groups)
     for first in order_candidates(list(units), unit_entries, feed_cfg, today, recent, up_next, ranks):
         try:
-            images = [upload_prep.prepare(md.find_photo(account, f)[0]) for f in units[first]]
+            images = [publisher.prepare(md.find_photo(account, f)[0]) for f in units[first]]
             break
         except Exception as exc:
             logger.error("[%s] skipping %s: %s", account, ", ".join(units[first]), exc)
@@ -365,7 +366,7 @@ def attempt(account: str, feed_cfg: dict, publisher, dry_run: bool, photo: str =
 
 def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.Event,
                 photo: str = None) -> None:
-    publisher = publishers.for_feed(account)
+    publisher = publishers.for_feed(account, current_feeds()[account])
     problem = publisher.missing_credentials()
     if not dry_run and problem:
         logger.error("[%s] can't post to %s: %s", account, publisher.platform, problem)
@@ -381,12 +382,20 @@ def worker_loop(account: str, dry_run: bool, once: bool, stop_event: threading.E
 
     was_disabled = False
     schedule = describe_schedule(cfg)
+    platform = cfg["platform"]
     missed_logged = None
     while not stop_event.is_set():
         cfg = current_feeds().get(account)
         if not cfg or not cfg["enabled"]:
             if not was_disabled:
                 logger.info("[%s] disabled in feeds.json -- idle until re-enabled", account)
+            was_disabled = True
+        elif cfg["platform"] != platform:
+            # The publisher (and its credentials) was set up at start, so
+            # posting on would go to the old platform.
+            if not was_disabled:
+                logger.error("[%s] platform changed to %s in feeds.json -- restart the poster to post there; "
+                             "idle until then", account, cfg["platform"])
             was_disabled = True
         else:
             was_disabled = False
@@ -422,7 +431,8 @@ def check(accounts: list[str], feeds: dict) -> bool:
         cfg = feeds[account]
         print(f"== {account}")
         print(f"   hashtags: {' '.join(cfg['hashtags']) or '(none)'}")
-        publisher = publishers.for_feed(account)
+        publisher = publishers.for_feed(account, cfg)
+        print(f"   platform: {publisher.platform}")
         problem = publisher.missing_credentials()
         if problem:
             print(f"   ✗ {problem}")
@@ -439,13 +449,13 @@ def check(accounts: list[str], feeds: dict) -> bool:
             ok = False
         entries, candidates, up_next = queue(account)
         groups = md.load_groups(account)
-        units = post_units(candidates, groups)
+        units = post_units(candidates, groups, cfg["limits"]["max_photos"])
         unit_entries = {first: md.effective_entry(first, entries, groups) for first in units}
         # Run every queued photo through the same prep as a real post.
-        unpostable, reencoded = [], 0
+        unpostable, methods = [], collections.Counter()
         for f in candidates:
             try:
-                reencoded += upload_prep.prepare(md.find_photo(account, f)[0]).method == "re-encoded"
+                methods[publisher.prepare(md.find_photo(account, f)[0]).method] += 1
             except Exception as exc:
                 unpostable.append(f"{f} ({exc})")
         no_alt = [f for f in candidates if not entries[f].get("alt_text")]
@@ -485,8 +495,10 @@ def check(accounts: list[str], feeds: dict) -> bool:
             print(f"   ✗ can't be prepared for upload (will be skipped):\n      " + "\n      ".join(unpostable))
             ok = False
         else:
+            padded = methods["padded"]
             print(f"   ✓ all {len(candidates)} upload clean: metadata stripped "
-                  f"({len(candidates) - reencoded} lossless, {reencoded} rotated + re-encoded)")
+                  f"({methods['lossless']} lossless, {methods['re-encoded']} rotated + re-encoded"
+                  + (f", {padded} padded to fit {publisher.platform}'s shapes" if padded else "") + ")")
         if no_alt:
             print(f"   ! no alt text: {', '.join(no_alt)}")
         print(f"   next post: {describe_next(load_state(account), cfg)}")

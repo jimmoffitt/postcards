@@ -69,6 +69,10 @@ Photo taken 2020-09-13
   into `#McIntosh #Longmont #Colorado`. Matching is case-insensitive substring; `[]` drops that part.
 - **One photo:** type a caption and/or hashtags into its caption box in the curate app.
 
+**Add an Instagram stream:** as below, plus `"platform": "instagram"` in its `feeds.json` entry,
+`<NAME>_IG_ACCESS_TOKEN` and the `R2_*` settings in the Pi's `.local.env` instead of the Bluesky
+ones, and `pip install -r requirements.txt` on the Pi. See the README's *Instagram feeds*.
+
 **Add a new stream:**
 
 1. Add an entry to `feeds.json`.
