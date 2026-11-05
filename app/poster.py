@@ -2,7 +2,8 @@
 """Multi-feed Bluesky posting daemon.
 
 One process, one thread per enabled feed in feeds.json, each posting at
-fixed local times (config.slot_times -- by default 08:00, 14:00, 20:00).
+fixed local times (config.slot_times -- by default 08:00, 14:00, 20:00, or per
+weekday with "times").
 At each slot, its worker picks a photo -- from up-next/ if there are any,
 else from curated/; one taken on today's date in an earlier year if there is
 one, else not from the region of the feed's last few posts (see order_candidates) -- posts it (alt text from
@@ -197,7 +198,9 @@ def describe_next(state: dict, feed_cfg: dict) -> str:
 
 
 def describe_schedule(feed_cfg: dict) -> str:
-    slots = [t.strftime("%H:%M") for t in config.slot_times(feed_cfg)]
+    if feed_cfg["week"] is not None:
+        return "; ".join(config.describe_week(feed_cfg)) + f" {feed_cfg['timezone']}"
+    slots = [t.strftime("%H:%M") for t in config.week_slots(feed_cfg)[0]]
     if len(slots) > 6:
         return (f"every {round(feed_cfg['interval_hours'] * 60)} min, {slots[0]}-{slots[-1]} "
                 f"{feed_cfg['timezone']} ({len(slots)}/day)")
@@ -493,7 +496,7 @@ def check(accounts: list[str], feeds: dict) -> bool:
             except Exception as exc:
                 unpostable.append(f"{f} ({exc})")
         no_alt = [f for f in candidates if not entries[f].get("alt_text")]
-        per_day = len(config.slot_times(cfg))
+        per_day = config.posts_per_day(cfg)
         print(f"   schedule: {describe_schedule(cfg)}")
         if cfg["order"] == "seasonal":
             today = datetime.datetime.now(cfg["tz"]).date()
@@ -524,7 +527,7 @@ def check(accounts: list[str], feeds: dict) -> bool:
         grouped = sum(1 for photos in units.values() if len(photos) > 1)
         print(f"   queue: {len(units)} posts ready ({up_next_posts} up next, {len(units) - up_next_posts} curated"
               + (f"; {grouped} of them groups, {len(candidates)} photos in all" if grouped else "")
-              + f"; ~{len(units) / per_day:.0f} days at {per_day}/day), {len(md.scan_posted(account))} photos posted")
+              + f"; ~{len(units) / per_day:.0f} days at {per_day:.3g}/day), {len(md.scan_posted(account))} photos posted")
         if unpostable:
             print(f"   ✗ can't be prepared for upload (will be skipped):\n      " + "\n      ".join(unpostable))
             ok = False

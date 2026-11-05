@@ -66,14 +66,15 @@ def api_stream(account):
     if account not in md.ACCOUNTS:
         abort(404)
     cfg = config.load_feeds()[account]
-    slots = config.slot_times(cfg)
-    per_day = len(slots)
+    per_day = config.posts_per_day(cfg)
     groups = md.load_groups(account)
     up_next = _count_posts(md.scan_up_next(account), groups)
     curated = up_next + _count_posts(md.scan_curated(account), groups)
     holding = _count_posts(md.scan_holding(account), groups)
     every = _describe_interval(cfg["interval_hours"])
-    if cfg["window_enabled"]:
+    if cfg["week"] is not None:
+        when = "at " + "; ".join(config.describe_week(cfg))
+    elif cfg["window_enabled"]:
         when = f"every {every} between {cfg['window_start']:02d}:00 and {cfg['window_end']:02d}:00"
     else:
         when = f"every {every}, around the clock"
@@ -89,8 +90,8 @@ def api_stream(account):
     return jsonify({
         "summary": summary,
         "enabled": cfg["enabled"],
-        "posts_per_day": per_day,
-        "slots": [t.strftime("%H:%M") for t in slots],
+        "posts_per_day": round(per_day, 2),
+        "slots": config.describe_week(cfg),
         "timezone": cfg["timezone"],
         "curated": curated, "up_next": up_next, "holding_pen": holding,
         "curated_days": round(curated / per_day, 1), "holding_pen_days": round(holding / per_day, 1),

@@ -121,6 +121,7 @@ block overrides them, then the feed's own entry overrides both:
 | `interval_hours` | `6` | Whole minutes, from 5 minutes to 24 hours |
 | `window_start` / `window_end` | `8` / `22` | Whole hours, local time |
 | `window_enabled` | `true` | If `false`, slots start at midnight and run all day |
+| `times` | `null` | Per-weekday `"HH:MM"` times, e.g. `{"mon-thu": ["08:00"], "fri-sun": ["16:00"]}`; replaces the window and interval |
 | `order` | `on_this_day` | `on_this_day`, `seasonal` or `random`; see below |
 | `season_days` | `21` | For `seasonal`: how close, in days, a photo's calendar date must be to today's |
 | `region_cooldown` | `2` | Posts before a region (state or country) may repeat, while photos from elsewhere are queued; `0` turns it off |
@@ -128,7 +129,9 @@ block overrides them, then the feed's own entry overrides both:
 
 **Schedule.** Posts go out at fixed local times: `window_start`, then every `interval_hours` until
 `window_end`. With the defaults that's **08:00, 14:00 and 20:00**, and the times stay on local time
-through daylight-saving changes.
+through daylight-saving changes. To post at different times on different days, set `times`
+instead: keys are a day (`"sat"`) or a range of days (`"mon-thu"`), each day listed once, and a day
+left out has no posts.
 
 **Which photo.** Each slot picks from these, in turn:
 

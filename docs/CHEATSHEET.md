@@ -42,6 +42,7 @@ from 8 to 22.
 | Post at 08:00 12:00 16:00 20:00 | `"interval_hours": 4` |
 | Post twice a day at 09:00 and 17:00 | `"window_start": 9, "window_end": 18, "interval_hours": 8` |
 | Post once a day at noon | `"window_start": 12, "window_end": 13, "interval_hours": 24` |
+| Post at different times on different days | `"times": {"mon-thu": ["08:00"], "fri-sun": ["16:00"]}` (a day left out has no posts) |
 | Post photos taken on today's date (any year) first, else random | nothing; `"order": "on_this_day"` is the default |
 | Prefer photos from this time of year | `"order": "seasonal"` (±21 days, any year) |
 | Loosen / tighten "this time of year" | `"season_days": 45` / `"season_days": 10` (with `seasonal`) |
@@ -52,7 +53,7 @@ from 8 to 22.
 | Post 2–4 photos together in one post | curate app: tick them in the list, click **Group**, write the group's message |
 | Change the "Photo taken 2020-09-13" line | `"date_format": "Taken %B %Y"` → `Taken September 2020`; `null` to leave it off |
 
-Posts go out at `window_start`, then every `interval_hours` until `window_end`.
+Posts go out at `window_start`, then every `interval_hours` until `window_end`, unless `times` is set.
 `poster.py --check` prints each stream's resulting times.
 
 **Post text:** `<caption, if any>` + blank line + `<place tags, most specific first> <feed hashtags>`

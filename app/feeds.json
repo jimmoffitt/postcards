@@ -11,7 +11,8 @@
       "enabled": true
     },
     "SomePostcards": {
-      "enabled": true
+      "enabled": true,
+      "times": {"mon-thu": ["08:00"], "fri-sun": ["16:00"]}
     }
   }
 }
