@@ -1,0 +1,7 @@
+[Unit]
+Description=Ping the router; reload Wi-Fi or reboot if it stays unreachable
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog.sh
